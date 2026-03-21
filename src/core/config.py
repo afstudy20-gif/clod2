@@ -35,8 +35,21 @@ def get_api_key(provider: str, config: dict | None = None) -> str | None:
         "gpt": "OPENAI_API_KEY",
         "gemini": "GOOGLE_API_KEY",
         "google": "GOOGLE_API_KEY",
+        "groq": "GROQ_API_KEY",
+        "mistral": "MISTRAL_API_KEY",
+        "deepseek": "DEEPSEEK_API_KEY",
+        "cohere": "COHERE_API_KEY",
+        # Ollama is local — no key needed
+        "ollama": None,
+        "local": None,
     }
-    env_var = env_map.get(provider.lower())
+    key_lower = provider.lower()
+    env_var = env_map.get(key_lower)
+
+    # Ollama is local — return a placeholder key so the provider can init
+    if key_lower in ("ollama", "local"):
+        return "ollama"
+
     if env_var:
         val = os.environ.get(env_var)
         if val:
@@ -44,7 +57,7 @@ def get_api_key(provider: str, config: dict | None = None) -> str | None:
 
     if config:
         keys = config.get("api_keys", {})
-        return keys.get(provider.lower())
+        return keys.get(key_lower)
     return None
 
 

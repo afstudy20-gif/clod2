@@ -92,11 +92,21 @@ API costs depend on token usage. To keep costs low:
 
 ## Providers & Models
 
+| Provider | Alias(es) | Key env var | Cost |
+|----------|-----------|-------------|------|
+| **Anthropic Claude** | `claude`, `anthropic` | `ANTHROPIC_API_KEY` | $$ |
+| **OpenAI ChatGPT** | `openai`, `chatgpt`, `gpt` | `OPENAI_API_KEY` | $$ |
+| **Google Gemini** | `gemini`, `google` | `GOOGLE_API_KEY` | $ |
+| **Groq** | `groq` | `GROQ_API_KEY` | free tier |
+| **Mistral AI** | `mistral` | `MISTRAL_API_KEY` | $ |
+| **DeepSeek** | `deepseek` | `DEEPSEEK_API_KEY` | very cheap |
+| **Cohere** | `cohere` | `COHERE_API_KEY` | $ |
+| **Ollama** | `ollama`, `local` | *(none — local)* | free |
+
 ### Anthropic (Claude)
 - `claude-sonnet-4-6` ← default, best balance
 - `claude-opus-4-6` ← most capable
 - `claude-haiku-4-5-20251001` ← fastest/cheapest
-- `claude-3-5-sonnet-20241022`
 
 ### OpenAI (ChatGPT)
 - `gpt-4o` ← default
@@ -107,6 +117,33 @@ API costs depend on token usage. To keep costs low:
 - `gemini-2.0-flash` ← default, fast
 - `gemini-1.5-pro` ← most capable
 - `gemini-1.5-flash` ← cheapest
+
+### Groq (free tier, very fast)
+- `llama-3.3-70b-versatile` ← default
+- `llama-3.1-8b-instant` ← fastest
+- `mixtral-8x7b-32768`
+
+### Mistral AI
+- `mistral-large-latest` ← default
+- `codestral-latest` ← optimized for code
+- `open-mistral-nemo` ← small/cheap
+
+### DeepSeek (cheapest paid option)
+- `deepseek-chat` ← default
+- `deepseek-reasoner` ← reasoning model
+
+### Cohere
+- `command-r-plus` ← default, best
+- `command-r` ← cheaper
+- `command-light` ← fastest
+
+### Ollama (100% local, free)
+```bash
+# Install Ollama first: https://ollama.com
+ollama pull llama3.2         # download a model
+python main.py --provider ollama --model llama3.2
+```
+- `llama3.2`, `llama3.1`, `codellama`, `mistral`, `qwen2.5-coder`, `phi4`, `deepseek-r1`
 
 ## Architecture
 

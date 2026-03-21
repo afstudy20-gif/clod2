@@ -43,6 +43,12 @@ PROVIDER_COLORS = {
     "gpt": "cyan",
     "gemini": "blue",
     "google": "blue",
+    "groq": "magenta",
+    "mistral": "yellow",
+    "deepseek": "bright_blue",
+    "ollama": "bright_green",
+    "local": "bright_green",
+    "cohere": "bright_magenta",
 }
 
 
@@ -60,7 +66,16 @@ def print_banner(provider_name: str, model: str):
 
 
 def get_prompt_style(provider_name: str) -> Style:
-    color_map = {"claude": "#00aa00", "openai": "#00aaaa", "gemini": "#0088ff"}
+    color_map = {
+        "claude": "#00aa00", "anthropic": "#00aa00",
+        "openai": "#00aaaa", "chatgpt": "#00aaaa", "gpt": "#00aaaa",
+        "gemini": "#0088ff", "google": "#0088ff",
+        "groq": "#cc00cc",
+        "mistral": "#ccaa00",
+        "deepseek": "#0055ff",
+        "ollama": "#00cc44", "local": "#00cc44",
+        "cohere": "#cc0088",
+    }
     color = color_map.get(provider_name.lower(), "#ffffff")
     return Style.from_dict({"prompt": color})
 
@@ -81,6 +96,11 @@ def print_help():
   claude / anthropic  →  Anthropic Claude models
   openai / chatgpt    →  OpenAI GPT models
   gemini / google     →  Google Gemini models
+  groq                →  Groq (fast, free tier)
+  mistral             →  Mistral AI
+  deepseek            →  DeepSeek (very cheap)
+  ollama / local      →  Ollama (local, free — no API key needed)
+  cohere              →  Cohere Command-R
 
 [bold]API Key Setup:[/bold]
   Set env vars: ANTHROPIC_API_KEY, OPENAI_API_KEY, GOOGLE_API_KEY

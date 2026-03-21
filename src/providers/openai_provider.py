@@ -1,3 +1,8 @@
+"""
+OpenAI-compatible provider base class.
+Groq, Mistral, DeepSeek, Ollama all use the same OpenAI API format
+with a different base_url and api_key.
+"""
 import json
 from typing import Iterator
 
@@ -6,20 +11,17 @@ from openai import OpenAI
 from .base import BaseProvider, Message, ToolCall
 
 
-class OpenAIProvider(BaseProvider):
-    name = "OpenAI (ChatGPT)"
+class OpenAICompatibleProvider(BaseProvider):
+    """Shared implementation for any OpenAI-compatible API endpoint."""
 
-    DEFAULT_MODELS = {
-        "gpt-4o": "gpt-4o",
-        "gpt-4o-mini": "gpt-4o-mini",
-        "gpt-4-turbo": "gpt-4-turbo",
-        "o1": "o1",
-        "o3-mini": "o3-mini",
-    }
+    BASE_URL: str | None = None  # Override in subclass
 
-    def __init__(self, api_key: str, model: str | None = None):
-        super().__init__(api_key, model or "gpt-4o")
-        self.client = OpenAI(api_key=api_key)
+    def __init__(self, api_key: str, model: str | None = None, base_url: str | None = None):
+        super().__init__(api_key, model)
+        self.client = OpenAI(
+            api_key=api_key,
+            base_url=base_url or self.BASE_URL,
+        )
 
     def stream_response(
         self,
@@ -30,7 +32,7 @@ class OpenAIProvider(BaseProvider):
         formatted = _format_messages(messages, system)
         openai_tools = _convert_tools(tools)
 
-        kwargs = {
+        kwargs: dict = {
             "model": self.model,
             "messages": formatted,
             "stream": True,
@@ -40,8 +42,6 @@ class OpenAIProvider(BaseProvider):
             kwargs["tool_choice"] = "auto"
 
         stream = self.client.chat.completions.create(**kwargs)
-
-        # Track streaming tool calls
         tool_calls_map: dict[int, dict] = {}
 
         for chunk in stream:
@@ -79,6 +79,98 @@ class OpenAIProvider(BaseProvider):
                     yield ToolCall(id=tc["id"], name=tc["name"], arguments=args)
                 tool_calls_map.clear()
 
+
+# ── OpenAI ────────────────────────────────────────────────────────────────────
+
+class OpenAIProvider(OpenAICompatibleProvider):
+    name = "OpenAI (ChatGPT)"
+    BASE_URL = None  # uses default openai.com endpoint
+
+    DEFAULT_MODELS = {
+        "gpt-4o": "gpt-4o",
+        "gpt-4o-mini": "gpt-4o-mini",
+        "gpt-4-turbo": "gpt-4-turbo",
+        "o1": "o1",
+        "o3-mini": "o3-mini",
+    }
+
+    def __init__(self, api_key: str, model: str | None = None):
+        super().__init__(api_key, model or "gpt-4o")
+
+
+# ── Groq ──────────────────────────────────────────────────────────────────────
+
+class GroqProvider(OpenAICompatibleProvider):
+    name = "Groq"
+    BASE_URL = "https://api.groq.com/openai/v1"
+
+    DEFAULT_MODELS = {
+        "llama-3.3-70b-versatile": "llama-3.3-70b-versatile",
+        "llama-3.1-8b-instant": "llama-3.1-8b-instant",
+        "mixtral-8x7b-32768": "mixtral-8x7b-32768",
+        "gemma2-9b-it": "gemma2-9b-it",
+        "llama3-groq-70b-8192-tool-use-preview": "llama3-groq-70b-8192-tool-use-preview",
+    }
+
+    def __init__(self, api_key: str, model: str | None = None):
+        super().__init__(api_key, model or "llama-3.3-70b-versatile")
+
+
+# ── Mistral ───────────────────────────────────────────────────────────────────
+
+class MistralProvider(OpenAICompatibleProvider):
+    name = "Mistral AI"
+    BASE_URL = "https://api.mistral.ai/v1"
+
+    DEFAULT_MODELS = {
+        "mistral-large-latest": "mistral-large-latest",
+        "mistral-small-latest": "mistral-small-latest",
+        "codestral-latest": "codestral-latest",
+        "open-mixtral-8x22b": "open-mixtral-8x22b",
+        "open-mistral-nemo": "open-mistral-nemo",
+    }
+
+    def __init__(self, api_key: str, model: str | None = None):
+        super().__init__(api_key, model or "mistral-large-latest")
+
+
+# ── DeepSeek ──────────────────────────────────────────────────────────────────
+
+class DeepSeekProvider(OpenAICompatibleProvider):
+    name = "DeepSeek"
+    BASE_URL = "https://api.deepseek.com/v1"
+
+    DEFAULT_MODELS = {
+        "deepseek-chat": "deepseek-chat",
+        "deepseek-reasoner": "deepseek-reasoner",
+    }
+
+    def __init__(self, api_key: str, model: str | None = None):
+        super().__init__(api_key, model or "deepseek-chat")
+
+
+# ── Ollama (local) ────────────────────────────────────────────────────────────
+
+class OllamaProvider(OpenAICompatibleProvider):
+    name = "Ollama (local)"
+    BASE_URL = "http://localhost:11434/v1"
+
+    DEFAULT_MODELS = {
+        "llama3.2": "llama3.2",
+        "llama3.1": "llama3.1",
+        "codellama": "codellama",
+        "mistral": "mistral",
+        "qwen2.5-coder": "qwen2.5-coder",
+        "phi4": "phi4",
+        "deepseek-r1": "deepseek-r1",
+    }
+
+    def __init__(self, api_key: str = "ollama", model: str | None = None, base_url: str | None = None):
+        # Ollama doesn't need a real API key
+        super().__init__(api_key or "ollama", model or "llama3.2", base_url or self.BASE_URL)
+
+
+# ── Shared helpers (same as before) ───────────────────────────────────────────
 
 def _format_messages(messages: list[Message], system: str) -> list[dict]:
     result = [{"role": "system", "content": system}]
