@@ -33,6 +33,9 @@ class ChatRequest(BaseModel):
     provider: str = "openai"
     model: str | None = None
     system: str = "You are a helpful assistant."
+    github_repo: str | None = None   # e.g. "owner/repo" — included in system prompt if set
+    github_branch: str = "main"
+    workspace: str = "/workspace"    # local scratch directory inside the container
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
@@ -83,17 +86,36 @@ def chat(req: ChatRequest):
 
     # Convert to internal Message format
     from src.providers.base import Message as InternalMessage
+    from src.tools.registry import get_default_registry
 
     internal_messages = [
         InternalMessage(role=m.role, content=m.content)
         for m in req.messages
     ]
 
+    # Build system prompt with context
+    system = req.system
+    if req.github_repo:
+        system += (
+            f"\n\nYou have access to the GitHub repository '{req.github_repo}' (branch: {req.github_branch}). "
+            f"Use github_read_file, github_write_file, github_list_dir, github_delete_file, and github_search_code "
+            f"to read and modify files in that repo."
+        )
+    system += f"\n\nLocal scratch directory for temporary files: {req.workspace}"
+
+    registry = get_default_registry()
+    tools = registry.get_schemas()
+
     def generate():
         try:
-            for chunk in provider.stream_response(internal_messages, [], req.system):
-                text = str(chunk)
-                yield f"data: {json.dumps({'text': text})}\n\n"
+            for chunk in provider.stream_response(internal_messages, tools, system):
+                from src.providers.base import ToolCall as TC
+                if isinstance(chunk, TC):
+                    result = registry.execute(chunk.name, chunk.arguments)
+                    tool_event = {"tool_call": {"name": chunk.name, "result": result[:2000]}}
+                    yield f"data: {json.dumps(tool_event)}\n\n"
+                else:
+                    yield f"data: {json.dumps({'text': str(chunk)})}\n\n"
         except Exception as e:
             yield f"data: {json.dumps({'error': str(e)})}\n\n"
         yield "data: [DONE]\n\n"

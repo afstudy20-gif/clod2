@@ -3,5 +3,7 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
+# Persistent workspace for local file operations (mount a volume here in Coolify)
+RUN mkdir -p /workspace
 EXPOSE 8000
 CMD ["uvicorn", "api:app", "--host", "0.0.0.0", "--port", "8000"]

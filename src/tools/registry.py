@@ -2,6 +2,13 @@
 from typing import Any, Callable
 
 from .implementations import bash, edit_file, glob_files, grep_search, list_dir, read_file, write_file
+from .github_tools import (
+    github_delete_file,
+    github_list_dir,
+    github_read_file,
+    github_search_code,
+    github_write_file,
+)
 
 
 class ToolRegistry:
@@ -145,6 +152,100 @@ def get_default_registry() -> ToolRegistry:
             },
         },
         list_dir,
+    )
+
+    # ── GitHub tools ─────────────────────────────────────────────────────────
+
+    reg.register(
+        {
+            "name": "github_read_file",
+            "description": "Read a file from a GitHub repository.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "repo": {"type": "string", "description": "owner/repo e.g. 'afstudy20-gif/Cclaude'"},
+                    "path": {"type": "string", "description": "File path inside the repo e.g. 'src/api.py'"},
+                    "ref": {"type": "string", "description": "Branch, tag or commit SHA (default: HEAD)"},
+                    "token": {"type": "string", "description": "GitHub token (optional, uses GITHUB_TOKEN env var if omitted)"},
+                },
+                "required": ["repo", "path"],
+            },
+        },
+        github_read_file,
+    )
+
+    reg.register(
+        {
+            "name": "github_write_file",
+            "description": "Create or update a file in a GitHub repository (commits directly).",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "repo": {"type": "string", "description": "owner/repo"},
+                    "path": {"type": "string", "description": "File path inside the repo"},
+                    "content": {"type": "string", "description": "New file content (plain text)"},
+                    "message": {"type": "string", "description": "Commit message"},
+                    "branch": {"type": "string", "description": "Branch to commit to (default: main)"},
+                    "token": {"type": "string", "description": "GitHub token (optional)"},
+                },
+                "required": ["repo", "path", "content", "message"],
+            },
+        },
+        github_write_file,
+    )
+
+    reg.register(
+        {
+            "name": "github_list_dir",
+            "description": "List files and folders in a GitHub repository directory.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "repo": {"type": "string", "description": "owner/repo"},
+                    "path": {"type": "string", "description": "Directory path (empty = repo root)"},
+                    "ref": {"type": "string", "description": "Branch, tag or commit SHA (default: HEAD)"},
+                    "token": {"type": "string", "description": "GitHub token (optional)"},
+                },
+                "required": ["repo"],
+            },
+        },
+        github_list_dir,
+    )
+
+    reg.register(
+        {
+            "name": "github_delete_file",
+            "description": "Delete a file from a GitHub repository.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "repo": {"type": "string", "description": "owner/repo"},
+                    "path": {"type": "string", "description": "File path to delete"},
+                    "message": {"type": "string", "description": "Commit message"},
+                    "branch": {"type": "string", "description": "Branch to commit to (default: main)"},
+                    "token": {"type": "string", "description": "GitHub token (optional)"},
+                },
+                "required": ["repo", "path", "message"],
+            },
+        },
+        github_delete_file,
+    )
+
+    reg.register(
+        {
+            "name": "github_search_code",
+            "description": "Search for code inside a GitHub repository.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "repo": {"type": "string", "description": "owner/repo"},
+                    "query": {"type": "string", "description": "Search query"},
+                    "token": {"type": "string", "description": "GitHub token (optional)"},
+                },
+                "required": ["repo", "query"],
+            },
+        },
+        github_search_code,
     )
 
     return reg
