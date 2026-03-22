@@ -37,6 +37,11 @@ class ChatRequest(BaseModel):
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
+@app.get("/")
+def root():
+    return {"name": "Cclaude API", "version": "0.1.0", "docs": "/docs", "health": "/health", "providers": "/providers"}
+
+
 @app.get("/health")
 def health():
     return {"status": "ok"}
