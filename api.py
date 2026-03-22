@@ -1,11 +1,12 @@
 """FastAPI web interface for Cclaude — wraps the multi-provider agent."""
 import json
 import os
-from typing import AsyncIterator
+from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from src.core.config import get_api_key, load_config
@@ -19,6 +20,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Serve static files (the web UI)
+_static = Path(__file__).parent / "static"
+if _static.exists():
+    app.mount("/static", StaticFiles(directory=str(_static)), name="static")
 
 
 # ── Request / response models ─────────────────────────────────────────────────
@@ -42,7 +48,10 @@ class ChatRequest(BaseModel):
 
 @app.get("/")
 def root():
-    return {"name": "Cclaude API", "version": "0.1.0", "docs": "/docs", "health": "/health", "providers": "/providers"}
+    index = Path(__file__).parent / "static" / "index.html"
+    if index.exists():
+        return FileResponse(str(index))
+    return {"name": "Cclaude API", "version": "0.1.0", "docs": "/docs"}
 
 
 @app.get("/health")

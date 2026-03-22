@@ -1,0 +1,895 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cclaude</title>
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg:         #0d0d0d;
+    --bg2:        #141414;
+    --bg3:        #1a1a1a;
+    --bg4:        #222;
+    --border:     #2a2a2a;
+    --border2:    #333;
+    --text:       #e8e8e8;
+    --text2:      #999;
+    --text3:      #666;
+    --accent:     #d97706;
+    --accent2:    #f59e0b;
+    --green:      #22c55e;
+    --blue:       #3b82f6;
+    --purple:     #a855f7;
+    --red:        #ef4444;
+    --cyan:       #06b6d4;
+    --mono:       'JetBrains Mono', 'Fira Code', 'Cascadia Code', 'Menlo', monospace;
+    --sans:       -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    --radius:     6px;
+    --sidebar-w: 260px;
+  }
+
+  html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(--text); font-family: var(--mono); font-size: 13px; }
+
+  /* ── Layout ── */
+  #app { display: flex; height: 100vh; }
+
+  /* ── Sidebar ── */
+  #sidebar {
+    width: var(--sidebar-w);
+    min-width: var(--sidebar-w);
+    background: var(--bg2);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  #sidebar-header {
+    padding: 16px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .logo {
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--accent2);
+    letter-spacing: -0.5px;
+  }
+
+  .logo span { color: var(--text2); font-weight: 400; }
+
+  #new-chat-btn {
+    margin: 12px;
+    padding: 8px 12px;
+    background: var(--bg4);
+    border: 1px solid var(--border2);
+    border-radius: var(--radius);
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 12px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    transition: background 0.15s, border-color 0.15s;
+  }
+  #new-chat-btn:hover { background: var(--bg3); border-color: var(--border2); color: var(--accent2); }
+
+  #sidebar-section { padding: 8px 12px 4px; color: var(--text3); font-size: 10px; text-transform: uppercase; letter-spacing: 1px; }
+
+  #chat-list { flex: 1; overflow-y: auto; padding: 4px 8px; }
+
+  .chat-item {
+    padding: 8px 10px;
+    border-radius: var(--radius);
+    cursor: pointer;
+    color: var(--text2);
+    font-size: 12px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    transition: background 0.1s, color 0.1s;
+    margin-bottom: 2px;
+  }
+  .chat-item:hover { background: var(--bg4); color: var(--text); }
+  .chat-item.active { background: var(--bg3); color: var(--text); border: 1px solid var(--border2); }
+
+  /* ── Settings panel in sidebar ── */
+  #settings-panel {
+    border-top: 1px solid var(--border);
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .field-label { color: var(--text3); font-size: 10px; text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 3px; }
+
+  select, input[type="text"] {
+    width: 100%;
+    background: var(--bg4);
+    border: 1px solid var(--border2);
+    border-radius: var(--radius);
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 12px;
+    padding: 6px 8px;
+    outline: none;
+    transition: border-color 0.15s;
+  }
+  select:focus, input[type="text"]:focus { border-color: var(--accent); }
+  select option { background: var(--bg2); }
+
+  /* ── Main area ── */
+  #main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+
+  /* ── Topbar ── */
+  #topbar {
+    padding: 10px 20px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    background: var(--bg2);
+    font-size: 12px;
+    color: var(--text3);
+  }
+  #topbar .provider-badge {
+    padding: 3px 8px;
+    border-radius: 4px;
+    border: 1px solid var(--border2);
+    color: var(--accent2);
+    font-size: 11px;
+  }
+  #topbar .model-badge {
+    color: var(--text2);
+    font-size: 11px;
+  }
+  #topbar .repo-badge {
+    margin-left: auto;
+    color: var(--cyan);
+    font-size: 11px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .status-dot {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--green);
+    display: inline-block;
+  }
+
+  /* ── Messages ── */
+  #messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: 24px 0;
+    scroll-behavior: smooth;
+  }
+
+  #messages::-webkit-scrollbar { width: 4px; }
+  #messages::-webkit-scrollbar-track { background: transparent; }
+  #messages::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 2px; }
+
+  .msg-row {
+    padding: 0 24px;
+    max-width: 860px;
+    margin: 0 auto;
+    width: 100%;
+  }
+
+  /* ── Welcome screen ── */
+  #welcome {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    gap: 12px;
+    color: var(--text3);
+    padding: 40px;
+  }
+  #welcome .big-logo { font-size: 32px; color: var(--accent2); font-weight: 700; }
+  #welcome .tagline { color: var(--text3); font-size: 13px; }
+  #welcome .hints {
+    margin-top: 24px;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    max-width: 500px;
+    width: 100%;
+  }
+  #welcome .hint {
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 12px 14px;
+    cursor: pointer;
+    transition: border-color 0.15s, background 0.15s;
+    color: var(--text2);
+    font-size: 12px;
+    line-height: 1.5;
+  }
+  #welcome .hint:hover { border-color: var(--accent); background: var(--bg4); color: var(--text); }
+  #welcome .hint strong { display: block; color: var(--text); margin-bottom: 3px; font-size: 12px; }
+
+  /* ── Message bubbles ── */
+  .msg { margin-bottom: 20px; }
+
+  .msg-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 6px;
+    font-size: 11px;
+    color: var(--text3);
+  }
+
+  .msg-role {
+    font-weight: 600;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+  }
+  .msg-role.user { color: var(--accent2); }
+  .msg-role.assistant { color: var(--green); }
+  .msg-role.tool { color: var(--purple); }
+
+  .msg-body {
+    color: var(--text);
+    line-height: 1.65;
+    font-size: 13px;
+  }
+
+  /* Markdown styles inside assistant messages */
+  .msg-body p { margin-bottom: 10px; }
+  .msg-body p:last-child { margin-bottom: 0; }
+  .msg-body h1, .msg-body h2, .msg-body h3 {
+    color: var(--text);
+    margin: 16px 0 8px;
+    font-weight: 600;
+  }
+  .msg-body h1 { font-size: 18px; }
+  .msg-body h2 { font-size: 15px; }
+  .msg-body h3 { font-size: 13px; }
+  .msg-body ul, .msg-body ol { padding-left: 20px; margin-bottom: 10px; }
+  .msg-body li { margin-bottom: 4px; }
+  .msg-body code {
+    background: var(--bg4);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 1px 5px;
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--cyan);
+  }
+  .msg-body pre {
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 14px;
+    overflow-x: auto;
+    margin: 10px 0;
+    position: relative;
+  }
+  .msg-body pre code {
+    background: none;
+    border: none;
+    padding: 0;
+    color: var(--text);
+    font-size: 12px;
+  }
+  .msg-body blockquote {
+    border-left: 3px solid var(--border2);
+    padding-left: 12px;
+    color: var(--text2);
+    margin: 8px 0;
+  }
+  .msg-body table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 10px 0;
+    font-size: 12px;
+  }
+  .msg-body th, .msg-body td {
+    border: 1px solid var(--border2);
+    padding: 6px 10px;
+    text-align: left;
+  }
+  .msg-body th { background: var(--bg4); color: var(--text2); }
+  .msg-body a { color: var(--blue); }
+
+  /* Copy button on code blocks */
+  .code-block-wrapper { position: relative; }
+  .copy-btn {
+    position: absolute;
+    top: 8px; right: 8px;
+    background: var(--bg4);
+    border: 1px solid var(--border2);
+    border-radius: 4px;
+    color: var(--text3);
+    font-family: var(--mono);
+    font-size: 10px;
+    padding: 3px 7px;
+    cursor: pointer;
+    transition: color 0.1s, border-color 0.1s;
+    opacity: 0;
+    transition: opacity 0.15s;
+  }
+  .code-block-wrapper:hover .copy-btn { opacity: 1; }
+  .copy-btn:hover { color: var(--text); border-color: var(--accent); }
+
+  /* ── Tool call block ── */
+  .tool-block {
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--purple);
+    border-radius: var(--radius);
+    margin: 8px 0;
+    overflow: hidden;
+  }
+  .tool-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    cursor: pointer;
+    user-select: none;
+    font-size: 12px;
+  }
+  .tool-header:hover { background: var(--bg4); }
+  .tool-icon { color: var(--purple); font-size: 12px; }
+  .tool-name { color: var(--purple); font-weight: 600; }
+  .tool-args-summary { color: var(--text3); font-size: 11px; flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tool-chevron { color: var(--text3); font-size: 10px; margin-left: auto; transition: transform 0.15s; }
+  .tool-chevron.open { transform: rotate(90deg); }
+  .tool-body {
+    border-top: 1px solid var(--border);
+    padding: 12px;
+    display: none;
+  }
+  .tool-body.open { display: block; }
+  .tool-result {
+    color: var(--text2);
+    font-size: 12px;
+    white-space: pre-wrap;
+    max-height: 300px;
+    overflow-y: auto;
+    line-height: 1.5;
+  }
+
+  /* ── Streaming cursor ── */
+  .cursor {
+    display: inline-block;
+    width: 8px; height: 14px;
+    background: var(--accent2);
+    vertical-align: middle;
+    border-radius: 1px;
+    animation: blink 1s step-end infinite;
+    margin-left: 2px;
+  }
+  @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0} }
+
+  /* ── Input area ── */
+  #input-area {
+    border-top: 1px solid var(--border);
+    padding: 16px 24px;
+    background: var(--bg2);
+  }
+
+  #input-wrapper {
+    max-width: 860px;
+    margin: 0 auto;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    background: var(--bg3);
+    border: 1px solid var(--border2);
+    border-radius: 10px;
+    padding: 12px 14px;
+    transition: border-color 0.15s;
+  }
+  #input-wrapper:focus-within { border-color: var(--accent); }
+
+  #user-input {
+    background: transparent;
+    border: none;
+    outline: none;
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 13px;
+    resize: none;
+    min-height: 24px;
+    max-height: 200px;
+    line-height: 1.6;
+    width: 100%;
+  }
+  #user-input::placeholder { color: var(--text3); }
+
+  #input-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  #input-hints { color: var(--text3); font-size: 11px; display: flex; gap: 10px; }
+  .hint-key {
+    background: var(--bg4);
+    border: 1px solid var(--border2);
+    border-radius: 3px;
+    padding: 1px 5px;
+    font-size: 10px;
+    color: var(--text3);
+  }
+
+  #send-btn {
+    background: var(--accent);
+    border: none;
+    border-radius: var(--radius);
+    color: #000;
+    font-family: var(--mono);
+    font-size: 12px;
+    font-weight: 700;
+    padding: 6px 14px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    transition: background 0.15s, opacity 0.15s;
+  }
+  #send-btn:hover { background: var(--accent2); }
+  #send-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  /* ── Scrollbar ── */
+  ::-webkit-scrollbar { width: 4px; height: 4px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 2px; }
+
+  /* ── Responsive ── */
+  @media (max-width: 700px) {
+    #sidebar { display: none; }
+  }
+</style>
+</head>
+<body>
+<div id="app">
+
+  <!-- ── Sidebar ── -->
+  <div id="sidebar">
+    <div id="sidebar-header">
+      <span class="logo">Cclaude<span> / AI</span></span>
+    </div>
+
+    <button id="new-chat-btn" onclick="newChat()">
+      <span>+</span> New chat
+    </button>
+
+    <div id="sidebar-section">History</div>
+    <div id="chat-list"></div>
+
+    <!-- Settings -->
+    <div id="settings-panel">
+      <div>
+        <div class="field-label">Provider</div>
+        <select id="provider-select" onchange="onProviderChange()">
+          <option value="openai">OpenAI</option>
+          <option value="claude">Anthropic Claude</option>
+          <option value="gemini">Google Gemini</option>
+          <option value="groq">Groq</option>
+          <option value="mistral">Mistral</option>
+          <option value="deepseek">DeepSeek</option>
+          <option value="cohere">Cohere</option>
+          <option value="ollama">Ollama (local)</option>
+        </select>
+      </div>
+      <div>
+        <div class="field-label">Model</div>
+        <select id="model-select"></select>
+      </div>
+      <div>
+        <div class="field-label">GitHub Repo</div>
+        <input type="text" id="github-repo" placeholder="owner/repo" />
+      </div>
+      <div>
+        <div class="field-label">Branch</div>
+        <input type="text" id="github-branch" value="main" />
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Main ── -->
+  <div id="main">
+
+    <!-- Topbar -->
+    <div id="topbar">
+      <span class="status-dot"></span>
+      <span class="provider-badge" id="tb-provider">openai</span>
+      <span class="model-badge" id="tb-model"></span>
+      <span class="repo-badge" id="tb-repo" style="display:none">
+        ⑂ <span id="tb-repo-name"></span>
+      </span>
+    </div>
+
+    <!-- Messages -->
+    <div id="messages">
+      <div id="welcome">
+        <div class="big-logo">Cclaude</div>
+        <div class="tagline">Multi-provider AI coding assistant</div>
+        <div class="hints">
+          <div class="hint" onclick="sendHint(this)">
+            <strong>Read a file</strong>Read the contents of main.py
+          </div>
+          <div class="hint" onclick="sendHint(this)">
+            <strong>GitHub</strong>List files in my repo
+          </div>
+          <div class="hint" onclick="sendHint(this)">
+            <strong>Write code</strong>Write a Python function to parse JSON
+          </div>
+          <div class="hint" onclick="sendHint(this)">
+            <strong>Explain</strong>Explain how streaming works in this API
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Input -->
+    <div id="input-area">
+      <div id="input-wrapper">
+        <textarea id="user-input" rows="1" placeholder="Message Cclaude…" onkeydown="handleKey(event)" oninput="autoResize(this)"></textarea>
+        <div id="input-footer">
+          <div id="input-hints">
+            <span><span class="hint-key">Enter</span> send</span>
+            <span><span class="hint-key">Shift+Enter</span> newline</span>
+          </div>
+          <button id="send-btn" onclick="sendMessage()">
+            Send ↑
+          </button>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+// ── State ──────────────────────────────────────────────────────────────────
+const MODELS = {
+  openai:   ['gpt-4o','gpt-4o-mini','gpt-4-turbo','o1','o3-mini'],
+  claude:   ['claude-sonnet-4-6','claude-opus-4-6','claude-haiku-4-5-20251001'],
+  gemini:   ['gemini-2.0-flash','gemini-1.5-pro','gemini-1.5-flash'],
+  groq:     ['llama-3.3-70b-versatile','llama-3.1-8b-instant','mixtral-8x7b-32768','gemma2-9b-it'],
+  mistral:  ['mistral-large-latest','mistral-small-latest','codestral-latest','open-mistral-nemo'],
+  deepseek: ['deepseek-chat','deepseek-reasoner'],
+  cohere:   ['command-r-plus','command-r','command-light'],
+  ollama:   ['llama3.2','llama3.1','codellama','mistral','qwen2.5-coder','phi4','deepseek-r1'],
+};
+
+let chats = JSON.parse(localStorage.getItem('cclaude_chats') || '[]');
+let currentChatId = null;
+let isStreaming = false;
+
+marked.setOptions({ breaks: true, gfm: true });
+
+// ── Init ───────────────────────────────────────────────────────────────────
+function init() {
+  onProviderChange();
+  renderChatList();
+  if (chats.length) loadChat(chats[0].id);
+}
+
+function onProviderChange() {
+  const p = document.getElementById('provider-select').value;
+  const ms = document.getElementById('model-select');
+  ms.innerHTML = (MODELS[p] || []).map(m => `<option value="${m}">${m}</option>`).join('');
+  updateTopbar();
+}
+
+function updateTopbar() {
+  const p = document.getElementById('provider-select').value;
+  const m = document.getElementById('model-select').value;
+  const repo = document.getElementById('github-repo').value.trim();
+  const branch = document.getElementById('github-branch').value.trim();
+  document.getElementById('tb-provider').textContent = p;
+  document.getElementById('tb-model').textContent = m;
+  const repoEl = document.getElementById('tb-repo');
+  const repoName = document.getElementById('tb-repo-name');
+  if (repo) {
+    repoEl.style.display = 'flex';
+    repoName.textContent = `${repo}@${branch}`;
+  } else {
+    repoEl.style.display = 'none';
+  }
+}
+document.getElementById('github-repo').addEventListener('input', updateTopbar);
+document.getElementById('github-branch').addEventListener('input', updateTopbar);
+document.getElementById('model-select').addEventListener('change', updateTopbar);
+
+// ── Chat management ────────────────────────────────────────────────────────
+function newChat() {
+  const id = Date.now().toString();
+  const chat = { id, title: 'New chat', messages: [] };
+  chats.unshift(chat);
+  saveChats();
+  loadChat(id);
+}
+
+function loadChat(id) {
+  currentChatId = id;
+  const chat = chats.find(c => c.id === id);
+  renderChatList();
+  const msgs = document.getElementById('messages');
+  msgs.innerHTML = '';
+  if (!chat || !chat.messages.length) {
+    msgs.innerHTML = document.getElementById('welcome').outerHTML;
+    return;
+  }
+  chat.messages.forEach(m => {
+    if (m.role === 'user') appendUserMsg(m.content, false);
+    else if (m.role === 'assistant') appendAssistantMsg(m.content, false);
+  });
+  msgs.scrollTop = msgs.scrollHeight;
+}
+
+function getCurrentChat() {
+  return chats.find(c => c.id === currentChatId);
+}
+
+function saveChats() {
+  // Only keep last 50 chats, trimmed for storage
+  const trimmed = chats.slice(0, 50).map(c => ({
+    ...c,
+    messages: c.messages.slice(-40)
+  }));
+  try { localStorage.setItem('cclaude_chats', JSON.stringify(trimmed)); } catch(e) {}
+}
+
+function renderChatList() {
+  const list = document.getElementById('chat-list');
+  list.innerHTML = chats.map(c => `
+    <div class="chat-item ${c.id === currentChatId ? 'active' : ''}" onclick="loadChat('${c.id}')">
+      ${escHtml(c.title)}
+    </div>
+  `).join('');
+}
+
+// ── Sending ────────────────────────────────────────────────────────────────
+function handleKey(e) {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+}
+
+function autoResize(el) {
+  el.style.height = 'auto';
+  el.style.height = Math.min(el.scrollHeight, 200) + 'px';
+}
+
+function sendHint(el) {
+  const text = el.querySelector('strong').nextSibling.textContent.trim();
+  document.getElementById('user-input').value = text;
+  sendMessage();
+}
+
+async function sendMessage() {
+  if (isStreaming) return;
+  const input = document.getElementById('user-input');
+  const text = input.value.trim();
+  if (!text) return;
+
+  // Hide welcome, ensure chat exists
+  if (!currentChatId) newChat();
+  const welcomeEl = document.getElementById('welcome');
+  if (welcomeEl) welcomeEl.remove();
+
+  input.value = '';
+  input.style.height = 'auto';
+
+  const chat = getCurrentChat();
+  chat.messages.push({ role: 'user', content: text });
+  if (chat.title === 'New chat') chat.title = text.slice(0, 40);
+  saveChats();
+  renderChatList();
+
+  appendUserMsg(text);
+  await streamAssistant(chat);
+}
+
+async function streamAssistant(chat) {
+  isStreaming = true;
+  document.getElementById('send-btn').disabled = true;
+
+  const provider = document.getElementById('provider-select').value;
+  const model = document.getElementById('model-select').value;
+  const repo = document.getElementById('github-repo').value.trim();
+  const branch = document.getElementById('github-branch').value.trim() || 'main';
+
+  // Build message row
+  const row = document.createElement('div');
+  row.className = 'msg-row';
+  const msgEl = document.createElement('div');
+  msgEl.className = 'msg';
+  const header = document.createElement('div');
+  header.className = 'msg-header';
+  header.innerHTML = `<span class="msg-role assistant">assistant</span>`;
+  const body = document.createElement('div');
+  body.className = 'msg-body';
+  body.innerHTML = '<span class="cursor"></span>';
+  msgEl.appendChild(header);
+  msgEl.appendChild(body);
+  row.appendChild(msgEl);
+  document.getElementById('messages').appendChild(row);
+  scrollBottom();
+
+  let fullText = '';
+
+  try {
+    const payload = {
+      messages: chat.messages,
+      provider,
+      model,
+      github_repo: repo || null,
+      github_branch: branch,
+    };
+
+    const resp = await fetch('/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({ detail: resp.statusText }));
+      body.innerHTML = `<span style="color:var(--red)">Error: ${escHtml(err.detail || 'Request failed')}</span>`;
+      isStreaming = false;
+      document.getElementById('send-btn').disabled = false;
+      return;
+    }
+
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      const lines = buf.split('\n');
+      buf = lines.pop();
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        const raw = line.slice(6);
+        if (raw === '[DONE]') break;
+        try {
+          const ev = JSON.parse(raw);
+          if (ev.text) {
+            fullText += ev.text;
+            body.innerHTML = renderMarkdown(fullText) + '<span class="cursor"></span>';
+            addCopyButtons(body);
+            scrollBottom();
+          } else if (ev.tool_call) {
+            appendToolBlock(body, ev.tool_call);
+            scrollBottom();
+          } else if (ev.error) {
+            fullText += `\n\n**Error:** ${ev.error}`;
+            body.innerHTML = renderMarkdown(fullText);
+          }
+        } catch {}
+      }
+    }
+  } catch (err) {
+    body.innerHTML = renderMarkdown(fullText) + `\n<span style="color:var(--red)">Network error: ${escHtml(err.message)}</span>`;
+  }
+
+  // Remove cursor
+  const cursor = body.querySelector('.cursor');
+  if (cursor) cursor.remove();
+  body.innerHTML = renderMarkdown(fullText);
+  addCopyButtons(body);
+  hljs.highlightAll();
+
+  chat.messages.push({ role: 'assistant', content: fullText });
+  saveChats();
+
+  isStreaming = false;
+  document.getElementById('send-btn').disabled = false;
+  scrollBottom();
+}
+
+// ── Rendering ──────────────────────────────────────────────────────────────
+function appendUserMsg(text, scroll = true) {
+  const msgs = document.getElementById('messages');
+  const row = document.createElement('div');
+  row.className = 'msg-row';
+  row.innerHTML = `
+    <div class="msg">
+      <div class="msg-header"><span class="msg-role user">you</span></div>
+      <div class="msg-body">${escHtml(text).replace(/\n/g, '<br>')}</div>
+    </div>`;
+  msgs.appendChild(row);
+  if (scroll) scrollBottom();
+}
+
+function appendAssistantMsg(text, scroll = true) {
+  const msgs = document.getElementById('messages');
+  const row = document.createElement('div');
+  row.className = 'msg-row';
+  const body = document.createElement('div');
+  body.className = 'msg-body';
+  body.innerHTML = renderMarkdown(text);
+  addCopyButtons(body);
+  row.innerHTML = `<div class="msg"><div class="msg-header"><span class="msg-role assistant">assistant</span></div></div>`;
+  row.firstChild.appendChild(body);
+  msgs.appendChild(row);
+  if (scroll) scrollBottom();
+}
+
+function appendToolBlock(container, tool) {
+  const argSummary = Object.entries(tool.args || {}).map(([k,v]) => `${k}=${JSON.stringify(v).slice(0,30)}`).join(', ');
+  const block = document.createElement('div');
+  block.className = 'tool-block';
+  const resultHtml = escHtml((tool.result || '').slice(0, 2000));
+  const id = 'tool-' + Date.now() + Math.random().toString(36).slice(2);
+  block.innerHTML = `
+    <div class="tool-header" onclick="toggleTool('${id}')">
+      <span class="tool-icon">⚡</span>
+      <span class="tool-name">${escHtml(tool.name)}</span>
+      <span class="tool-args-summary">${escHtml(argSummary)}</span>
+      <span class="tool-chevron" id="chev-${id}">▶</span>
+    </div>
+    <div class="tool-body" id="${id}">
+      <div class="tool-result">${resultHtml}</div>
+    </div>`;
+  container.appendChild(block);
+}
+
+function toggleTool(id) {
+  const body = document.getElementById(id);
+  const chev = document.getElementById('chev-' + id);
+  body.classList.toggle('open');
+  chev.classList.toggle('open');
+}
+
+function renderMarkdown(text) {
+  return marked.parse(text || '');
+}
+
+function addCopyButtons(container) {
+  container.querySelectorAll('pre').forEach(pre => {
+    if (pre.parentElement.classList.contains('code-block-wrapper')) return;
+    const wrapper = document.createElement('div');
+    wrapper.className = 'code-block-wrapper';
+    pre.parentNode.insertBefore(wrapper, pre);
+    wrapper.appendChild(pre);
+    const btn = document.createElement('button');
+    btn.className = 'copy-btn';
+    btn.textContent = 'copy';
+    btn.onclick = () => {
+      navigator.clipboard.writeText(pre.textContent);
+      btn.textContent = 'copied!';
+      setTimeout(() => btn.textContent = 'copy', 1500);
+    };
+    wrapper.appendChild(btn);
+  });
+}
+
+function scrollBottom() {
+  const msgs = document.getElementById('messages');
+  msgs.scrollTop = msgs.scrollHeight;
+}
+
+function escHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ── Boot ───────────────────────────────────────────────────────────────────
+init();
+</script>
+</body>
+</html>
