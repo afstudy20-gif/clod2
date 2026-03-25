@@ -136,15 +136,16 @@ def set_key(req: KeyRequest):
 
 @app.post("/config/key/test")
 def test_key(req: KeyRequest):
-    """Test an API key by making a minimal request to the provider."""
+    """Test an API key by listing models (fast, no generation needed)."""
     try:
-        provider = get_provider(req.provider, api_key=req.key)
-        from src.providers.base import Message
-        test_msgs = [Message(role="user", content="Say hi in 3 words.")]
-        # Consume just first chunk to verify the key works
-        for chunk in provider.stream_response(test_msgs, [], "Be brief."):
+        cls = PROVIDERS.get(req.provider.lower())
+        if not cls:
+            return {"valid": False, "provider": req.provider, "error": "Unknown provider"}
+        # Use fetch_available_models — it's a quick API call, not a generation
+        models = cls.fetch_available_models(req.key)
+        if models:
             return {"valid": True, "provider": req.provider}
-        return {"valid": True, "provider": req.provider}
+        return {"valid": False, "provider": req.provider, "error": "No models returned"}
     except Exception as e:
         return {"valid": False, "provider": req.provider, "error": str(e)}
 
