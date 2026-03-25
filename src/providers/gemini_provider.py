@@ -3,6 +3,7 @@ from typing import Iterator
 
 import google.generativeai as genai
 from google.generativeai.types import FunctionDeclaration, Tool as GeminiTool
+from google.generativeai.types import content_types
 
 from .base import BaseProvider, Message, ToolCall
 
@@ -21,6 +22,8 @@ class GeminiProvider(BaseProvider):
 
     def __init__(self, api_key: str, model: str | None = None):
         super().__init__(api_key, model or "gemini-3-flash")
+        # Store raw response parts for thought_signature preservation
+        self._last_raw_parts = []
         # Check for OAuth credentials first
         if api_key == "__oauth__":
             try:
@@ -43,7 +46,6 @@ class GeminiProvider(BaseProvider):
             models = []
             for m in genai.list_models():
                 name = m.name.replace("models/", "")
-                # Only include generative models (not embedding/retrieval)
                 if "generateContent" in [ms for ms in (m.supported_generation_methods or [])]:
                     models.append(name)
             return sorted(models) if models else list(cls.DEFAULT_MODELS.values())
@@ -57,7 +59,6 @@ class GeminiProvider(BaseProvider):
         system: str,
     ) -> Iterator[str | ToolCall]:
         gemini_tools = _convert_tools(tools)
-        formatted = _format_messages(messages)
 
         model = genai.GenerativeModel(
             model_name=self.model,
@@ -65,8 +66,15 @@ class GeminiProvider(BaseProvider):
             tools=gemini_tools if gemini_tools else None,
         )
 
-        response = model.generate_content(
-            formatted,
+        # Use ChatSession to auto-handle thought_signature for Gemini 3.x
+        history = _format_history(messages[:-1])
+        chat = model.start_chat(history=history)
+
+        # Get the last user message
+        last_content = _get_last_content(messages)
+
+        response = chat.send_message(
+            last_content,
             stream=True,
             generation_config=genai.types.GenerationConfig(max_output_tokens=8096),
         )
@@ -87,31 +95,66 @@ class GeminiProvider(BaseProvider):
                     )
 
 
-def _format_messages(messages: list[Message]) -> list[dict]:
+def _get_last_content(messages: list[Message]) -> str | list[dict]:
+    """Extract the last message content for send_message()."""
+    if not messages:
+        return "Hello"
+    last = messages[-1]
+    if last.role == "tool":
+        # Return function responses for tool results
+        parts = []
+        for tr in last.tool_results:
+            parts.append(
+                genai.protos.Part(
+                    function_response=genai.protos.FunctionResponse(
+                        name=tr.tool_call_id,
+                        response={"result": tr.content},
+                    )
+                )
+            )
+        return parts
+    return str(last.content)
+
+
+def _format_history(messages: list[Message]) -> list[genai.protos.Content]:
+    """Format message history for ChatSession, preserving structure."""
     result = []
     for msg in messages:
-        role = "model" if msg.role == "assistant" else "user"
         if msg.role == "tool":
             parts = []
             for tr in msg.tool_results:
-                parts.append({
-                    "function_response": {
-                        "name": tr.tool_call_id,
-                        "response": {"result": tr.content},
-                    }
-                })
-            result.append({"role": "user", "parts": parts})
-        elif msg.tool_calls:
+                parts.append(
+                    genai.protos.Part(
+                        function_response=genai.protos.FunctionResponse(
+                            name=tr.tool_call_id,
+                            response={"result": tr.content},
+                        )
+                    )
+                )
+            result.append(genai.protos.Content(role="user", parts=parts))
+        elif msg.role == "assistant":
             parts = []
             if msg.content:
-                parts.append({"text": str(msg.content)})
-            for tc in msg.tool_calls:
-                parts.append({
-                    "function_call": {"name": tc.name, "args": tc.arguments}
-                })
-            result.append({"role": "model", "parts": parts})
-        else:
-            result.append({"role": role, "parts": [{"text": str(msg.content)}]})
+                parts.append(genai.protos.Part(text=str(msg.content)))
+            if msg.tool_calls:
+                for tc in msg.tool_calls:
+                    parts.append(
+                        genai.protos.Part(
+                            function_call=genai.protos.FunctionCall(
+                                name=tc.name,
+                                args=tc.arguments,
+                            )
+                        )
+                    )
+            if parts:
+                result.append(genai.protos.Content(role="model", parts=parts))
+        elif msg.role == "user":
+            result.append(
+                genai.protos.Content(
+                    role="user",
+                    parts=[genai.protos.Part(text=str(msg.content))],
+                )
+            )
     return result
 
 
