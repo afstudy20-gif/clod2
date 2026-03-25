@@ -14,9 +14,10 @@ class CohereProvider(BaseProvider):
     name = "Cohere"
 
     DEFAULT_MODELS = {
+        "command-a-reasoning": "command-a-reasoning",
+        "command-a-vision": "command-a-vision",
         "command-a-03-2025": "command-a-03-2025",
         "command-r-plus": "command-r-plus",
-        "command-r": "command-r",
         "command-r7b-12-2024": "command-r7b-12-2024",
     }
 
