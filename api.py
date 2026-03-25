@@ -200,14 +200,14 @@ def refresh_models():
         api_key = get_api_key(alias, config)
         if not api_key and alias not in ("ollama", "local"):
             # No key → return static defaults
-            result[alias] = list(cls.DEFAULT_MODELS.keys())
+            result[alias] = list(cls.DEFAULT_MODELS.values())
             continue
 
         try:
             live = cls.fetch_available_models(api_key or "ollama")
             result[alias] = live
         except Exception:
-            result[alias] = list(cls.DEFAULT_MODELS.keys())
+            result[alias] = list(cls.DEFAULT_MODELS.values())
 
     _live_models = result
     return result
@@ -222,7 +222,7 @@ def list_providers():
         if cls in seen:
             continue
         seen.add(cls)
-        models = _live_models.get(alias, list(cls.DEFAULT_MODELS.keys()))
+        models = _live_models.get(alias, list(cls.DEFAULT_MODELS.values()))
         result[alias] = {
             "name": cls.name if isinstance(cls.name, str) else alias,
             "models": models,

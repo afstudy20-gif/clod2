@@ -43,9 +43,9 @@ class OpenAICompatibleProvider(BaseProvider):
                 m["id"] for m in data
                 if not any(ex in m["id"].lower() for ex in cls._EXCLUDE_PATTERNS)
             )
-            return ids if ids else list(cls.DEFAULT_MODELS.keys())
+            return ids if ids else list(cls.DEFAULT_MODELS.values())
         except Exception:
-            return list(cls.DEFAULT_MODELS.keys())
+            return list(cls.DEFAULT_MODELS.values())
 
     def stream_response(
         self,
@@ -205,9 +205,9 @@ class OllamaProvider(OpenAICompatibleProvider):
             resp = requests.get("http://localhost:11434/api/tags", timeout=5)
             resp.raise_for_status()
             models = resp.json().get("models", [])
-            return sorted(m["name"].split(":")[0] for m in models) or list(cls.DEFAULT_MODELS.keys())
+            return sorted(m["name"].split(":")[0] for m in models) or list(cls.DEFAULT_MODELS.values())
         except Exception:
-            return list(cls.DEFAULT_MODELS.keys())
+            return list(cls.DEFAULT_MODELS.values())
 
 
 # ── Shared helpers (same as before) ───────────────────────────────────────────

@@ -62,13 +62,14 @@ class BaseProvider(ABC):
         pass
 
     def list_models(self) -> list[str]:
-        return list(self.DEFAULT_MODELS.keys())
+        return list(self.DEFAULT_MODELS.values())
 
     @classmethod
     def fetch_available_models(cls, api_key: str) -> list[str]:
         """Fetch live model list from the provider API.
 
-        Returns a list of model IDs. Subclasses override this to call
-        the provider's real /models endpoint. Falls back to DEFAULT_MODELS.
+        Returns a list of actual API model IDs. Subclasses override this
+        to call the provider's real /models endpoint. Falls back to
+        DEFAULT_MODELS values (the actual API IDs).
         """
-        return list(cls.DEFAULT_MODELS.keys())
+        return list(cls.DEFAULT_MODELS.values())

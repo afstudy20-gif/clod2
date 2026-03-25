@@ -32,9 +32,9 @@ class CohereProvider(BaseProvider):
             client = cohere.Client(api_key=api_key)
             resp = client.models.list()
             models = [m.name for m in resp.models if hasattr(m, "name") and "command" in m.name.lower()]
-            return sorted(models) if models else list(cls.DEFAULT_MODELS.keys())
+            return sorted(models) if models else list(cls.DEFAULT_MODELS.values())
         except Exception:
-            return list(cls.DEFAULT_MODELS.keys())
+            return list(cls.DEFAULT_MODELS.values())
 
     def stream_response(
         self,

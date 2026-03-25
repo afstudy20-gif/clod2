@@ -48,9 +48,9 @@ class OpenRouterProvider(OpenAICompatibleProvider):
             # Prioritize major providers
             priority = ["anthropic/", "openai/", "google/", "meta-llama/", "deepseek/", "mistralai/"]
             top = [m for m in models if any(m.startswith(p) for p in priority)]
-            return sorted(top)[:50] if top else list(cls.DEFAULT_MODELS.keys())
+            return sorted(top)[:50] if top else list(cls.DEFAULT_MODELS.values())
         except Exception:
-            return list(cls.DEFAULT_MODELS.keys())
+            return list(cls.DEFAULT_MODELS.values())
 
     def __init__(self, api_key: str, model: str | None = None):
         super().__init__(
