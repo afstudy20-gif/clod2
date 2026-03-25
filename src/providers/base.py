@@ -18,6 +18,16 @@ class ToolResult:
 
 
 @dataclass
+class ToolEvent:
+    """Structured event for tool execution lifecycle."""
+    type: str  # "start", "result"
+    tool_name: str
+    arguments: dict
+    result: str | None = None
+    is_error: bool = False
+
+
+@dataclass
 class Message:
     role: str  # "user", "assistant", "tool"
     content: str | list[Any]

@@ -5,10 +5,27 @@ import re
 import subprocess
 from pathlib import Path
 
+# Project root for resolving relative paths
+_project_root: str | None = None
+
+
+def set_project_root(root: str | None):
+    """Set the project root for resolving relative paths."""
+    global _project_root
+    _project_root = root
+
+
+def _resolve_path(path: str) -> Path:
+    """Resolve a path, making relative paths relative to project root."""
+    p = Path(path).expanduser()
+    if not p.is_absolute() and _project_root:
+        p = Path(_project_root) / p
+    return p
+
 
 def read_file(path: str, offset: int = 0, limit: int = 2000) -> str:
     """Read a file and return its contents with line numbers."""
-    p = Path(path).expanduser()
+    p = _resolve_path(path)
     if not p.exists():
         return f"Error: File not found: {path}"
     if not p.is_file():
@@ -29,7 +46,7 @@ def read_file(path: str, offset: int = 0, limit: int = 2000) -> str:
 
 def write_file(path: str, content: str) -> str:
     """Write content to a file, creating parent dirs as needed."""
-    p = Path(path).expanduser()
+    p = _resolve_path(path)
     try:
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(content, encoding="utf-8")
@@ -40,7 +57,7 @@ def write_file(path: str, content: str) -> str:
 
 def edit_file(path: str, old_string: str, new_string: str) -> str:
     """Replace the first occurrence of old_string with new_string in a file."""
-    p = Path(path).expanduser()
+    p = _resolve_path(path)
     if not p.exists():
         return f"Error: File not found: {path}"
     try:
@@ -68,6 +85,7 @@ def bash(command: str, timeout: int = 30) -> str:
             capture_output=True,
             text=True,
             timeout=timeout,
+            cwd=_project_root,
         )
         output = ""
         if result.stdout:
@@ -85,7 +103,7 @@ def bash(command: str, timeout: int = 30) -> str:
 
 def glob_files(pattern: str, path: str = ".") -> str:
     """Find files matching a glob pattern."""
-    base = Path(path).expanduser()
+    base = _resolve_path(path)
     try:
         matches = sorted(base.rglob(pattern.lstrip("**/").lstrip("/")))
         if not matches:
@@ -110,7 +128,7 @@ def grep_search(
 ) -> str:
     """Search file contents using regex."""
     flags = re.IGNORECASE if case_insensitive else 0
-    base = Path(path).expanduser()
+    base = _resolve_path(path)
     results = []
     try:
         compiled = re.compile(pattern, flags)
@@ -149,7 +167,7 @@ def grep_search(
 
 def list_dir(path: str = ".") -> str:
     """List directory contents."""
-    p = Path(path).expanduser()
+    p = _resolve_path(path)
     if not p.exists():
         return f"Error: Path not found: {path}"
     if not p.is_dir():

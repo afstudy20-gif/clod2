@@ -2,6 +2,18 @@
 from typing import Any, Callable
 
 from .implementations import bash, edit_file, glob_files, grep_search, list_dir, read_file, write_file
+from .git_tools import (
+    git_add,
+    git_branch,
+    git_checkout,
+    git_commit,
+    git_create_pr,
+    git_diff,
+    git_log,
+    git_pull,
+    git_push,
+    git_status,
+)
 from .github_tools import (
     github_delete_file,
     github_list_dir,
@@ -15,13 +27,18 @@ class ToolRegistry:
     def __init__(self):
         self._tools: dict[str, dict] = {}
         self._handlers: dict[str, Callable] = {}
+        self._readonly: set[str] = set()
 
-    def register(self, schema: dict, handler: Callable):
+    def register(self, schema: dict, handler: Callable, readonly: bool = False):
         name = schema["name"]
         self._tools[name] = schema
         self._handlers[name] = handler
+        if readonly:
+            self._readonly.add(name)
 
-    def get_schemas(self) -> list[dict]:
+    def get_schemas(self, readonly_only: bool = False) -> list[dict]:
+        if readonly_only:
+            return [s for s in self._tools.values() if s["name"] in self._readonly]
         return list(self._tools.values())
 
     def execute(self, name: str, arguments: dict[str, Any]) -> str:
@@ -53,6 +70,7 @@ def get_default_registry() -> ToolRegistry:
             },
         },
         read_file,
+        readonly=True,
     )
 
     reg.register(
@@ -118,6 +136,7 @@ def get_default_registry() -> ToolRegistry:
             },
         },
         glob_files,
+        readonly=True,
     )
 
     reg.register(
@@ -137,6 +156,7 @@ def get_default_registry() -> ToolRegistry:
             },
         },
         grep_search,
+        readonly=True,
     )
 
     reg.register(
@@ -152,6 +172,7 @@ def get_default_registry() -> ToolRegistry:
             },
         },
         list_dir,
+        readonly=True,
     )
 
     # ── GitHub tools ─────────────────────────────────────────────────────────
@@ -172,6 +193,7 @@ def get_default_registry() -> ToolRegistry:
             },
         },
         github_read_file,
+        readonly=True,
     )
 
     reg.register(
@@ -210,6 +232,7 @@ def get_default_registry() -> ToolRegistry:
             },
         },
         github_list_dir,
+        readonly=True,
     )
 
     reg.register(
@@ -246,6 +269,170 @@ def get_default_registry() -> ToolRegistry:
             },
         },
         github_search_code,
+        readonly=True,
+    )
+
+    # ── Git tools (local repository operations) ──────────────────────────────
+
+    reg.register(
+        {
+            "name": "git_status",
+            "description": "Show git working tree status (staged, unstaged, untracked files).",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": [],
+            },
+        },
+        git_status,
+        readonly=True,
+    )
+
+    reg.register(
+        {
+            "name": "git_diff",
+            "description": "Show git diff of changes. Use staged=true for staged changes.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "staged": {"type": "boolean", "description": "Show staged changes only (default: false)"},
+                    "path": {"type": "string", "description": "Limit diff to specific file path"},
+                },
+                "required": [],
+            },
+        },
+        git_diff,
+        readonly=True,
+    )
+
+    reg.register(
+        {
+            "name": "git_log",
+            "description": "Show recent git commit history.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "count": {"type": "integer", "description": "Number of commits to show (default: 10, max: 50)"},
+                    "oneline": {"type": "boolean", "description": "One line per commit (default: true)"},
+                },
+                "required": [],
+            },
+        },
+        git_log,
+        readonly=True,
+    )
+
+    reg.register(
+        {
+            "name": "git_add",
+            "description": "Stage files for commit. Use '.' to stage all changes.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "paths": {"type": "string", "description": "Space-separated file paths to stage (default: '.')"},
+                },
+                "required": [],
+            },
+        },
+        git_add,
+    )
+
+    reg.register(
+        {
+            "name": "git_commit",
+            "description": "Create a git commit with the staged changes.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "message": {"type": "string", "description": "Commit message"},
+                },
+                "required": ["message"],
+            },
+        },
+        git_commit,
+    )
+
+    reg.register(
+        {
+            "name": "git_push",
+            "description": "Push commits to the remote repository.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "remote": {"type": "string", "description": "Remote name (default: 'origin')"},
+                    "branch": {"type": "string", "description": "Branch to push (default: current branch)"},
+                    "force": {"type": "boolean", "description": "Force push with lease (default: false)"},
+                },
+                "required": [],
+            },
+        },
+        git_push,
+    )
+
+    reg.register(
+        {
+            "name": "git_pull",
+            "description": "Pull changes from the remote repository.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "remote": {"type": "string", "description": "Remote name (default: 'origin')"},
+                    "branch": {"type": "string", "description": "Branch to pull (default: current branch)"},
+                },
+                "required": [],
+            },
+        },
+        git_pull,
+    )
+
+    reg.register(
+        {
+            "name": "git_branch",
+            "description": "Create, delete, or list git branches.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "Branch name (omit to list all branches)"},
+                    "delete": {"type": "boolean", "description": "Delete the branch (default: false)"},
+                    "list_all": {"type": "boolean", "description": "List all branches including remotes"},
+                },
+                "required": [],
+            },
+        },
+        git_branch,
+    )
+
+    reg.register(
+        {
+            "name": "git_checkout",
+            "description": "Switch to a different branch, tag, or commit.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "ref": {"type": "string", "description": "Branch name, tag, or commit SHA to switch to"},
+                },
+                "required": ["ref"],
+            },
+        },
+        git_checkout,
+    )
+
+    reg.register(
+        {
+            "name": "git_create_pr",
+            "description": "Create a GitHub pull request (requires gh CLI installed and authenticated).",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string", "description": "PR title"},
+                    "body": {"type": "string", "description": "PR description/body"},
+                    "base": {"type": "string", "description": "Base branch to merge into (default: 'main')"},
+                    "head": {"type": "string", "description": "Head branch with changes (default: current branch)"},
+                },
+                "required": ["title"],
+            },
+        },
+        git_create_pr,
     )
 
     return reg

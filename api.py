@@ -10,6 +10,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from src.core.config import get_api_key, load_config
+from src.core.session import list_sessions, load_session, save_session, delete_session
 from src.providers import get_provider, PROVIDERS
 
 app = FastAPI(title="Cclaude API", version="0.1.0")
@@ -42,6 +43,7 @@ class ChatRequest(BaseModel):
     github_repo: str | None = None   # e.g. "owner/repo" — included in system prompt if set
     github_branch: str = "main"
     workspace: str = "/workspace"    # local scratch directory inside the container
+    session_id: str | None = None    # optional session ID for persistence
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
@@ -93,48 +95,115 @@ def chat(req: ChatRequest):
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    # Convert to internal Message format
-    from src.providers.base import Message as InternalMessage
+    from src.core.agent import Agent
+    from src.providers.base import Message as InternalMessage, ToolEvent
     from src.tools.registry import get_default_registry
 
-    internal_messages = [
+    # Load session history if provided
+    session_messages: list[InternalMessage] = []
+    if req.session_id:
+        try:
+            session_messages, _ = load_session(req.session_id)
+        except FileNotFoundError:
+            pass
+
+    internal_messages = session_messages + [
         InternalMessage(role=m.role, content=m.content)
         for m in req.messages
     ]
 
-    # Build system prompt with context
-    system = req.system
-    if req.github_repo:
-        system += (
-            f"\n\nYou have access to the GitHub repository '{req.github_repo}' (branch: {req.github_branch}). "
-            f"Use github_read_file, github_write_file, github_list_dir, github_delete_file, and github_search_code "
-            f"to read and modify files in that repo."
-        )
-    system += f"\n\nLocal scratch directory for temporary files: {req.workspace}"
-
     registry = get_default_registry()
-    tools = registry.get_schemas()
+    agent = Agent(provider, registry)
+    agent.history = internal_messages[:-1]  # All but last (chat() appends it)
+
+    last_msg = req.messages[-1].content if req.messages else ""
 
     def generate():
         try:
-            for chunk in provider.stream_response(internal_messages, tools, system):
-                from src.providers.base import ToolCall as TC
-                if isinstance(chunk, TC):
-                    result = registry.execute(chunk.name, chunk.arguments)
-                    tool_event = {"tool_call": {"name": chunk.name, "result": result[:2000]}}
-                    yield f"data: {json.dumps(tool_event)}\n\n"
+            for chunk in agent.chat(last_msg):
+                if isinstance(chunk, ToolEvent):
+                    yield f"data: {json.dumps({'tool_event': {'type': chunk.type, 'name': chunk.tool_name, 'result': (chunk.result or '')[:2000]}})}\n\n"
                 else:
                     yield f"data: {json.dumps({'text': str(chunk)})}\n\n"
         except Exception as e:
             yield f"data: {json.dumps({'error': str(e)})}\n\n"
+
+        # Auto-save session if session_id provided
+        if req.session_id:
+            save_session(req.session_id, agent.history, req.provider, req.model or "")
+
         yield "data: [DONE]\n\n"
 
     return StreamingResponse(generate(), media_type="text/event-stream")
 
 
+class KeyRequest(BaseModel):
+    provider: str
+    key: str
+
+
 @app.post("/config/key")
-def set_key(provider: str, key: str):
+def set_key(req: KeyRequest):
     """Save an API key to the config file."""
     from src.core.config import set_api_key
-    set_api_key(provider, key)
-    return {"saved": True, "provider": provider}
+    set_api_key(req.provider, req.key)
+    return {"saved": True, "provider": req.provider}
+
+
+@app.post("/config/key/test")
+def test_key(req: KeyRequest):
+    """Test an API key by making a minimal request to the provider."""
+    try:
+        provider = get_provider(req.provider, api_key=req.key)
+        from src.providers.base import Message
+        test_msgs = [Message(role="user", content="Say hi in 3 words.")]
+        # Consume just first chunk to verify the key works
+        for chunk in provider.stream_response(test_msgs, [], "Be brief."):
+            return {"valid": True, "provider": req.provider}
+        return {"valid": True, "provider": req.provider}
+    except Exception as e:
+        return {"valid": False, "provider": req.provider, "error": str(e)}
+
+
+@app.get("/config/keys")
+def get_saved_keys():
+    """Return which providers have saved API keys (without revealing the keys)."""
+    config = load_config()
+    keys = config.get("api_keys", {})
+    import os
+    env_map = {
+        "openai": "OPENAI_API_KEY",
+        "claude": "ANTHROPIC_API_KEY",
+        "gemini": "GOOGLE_API_KEY",
+        "groq": "GROQ_API_KEY",
+        "mistral": "MISTRAL_API_KEY",
+        "deepseek": "DEEPSEEK_API_KEY",
+        "cohere": "COHERE_API_KEY",
+        "openrouter": "OPENROUTER_API_KEY",
+    }
+    result = {}
+    for p, env_var in env_map.items():
+        has_env = bool(os.environ.get(env_var))
+        has_saved = bool(keys.get(p))
+        result[p] = {
+            "configured": has_env or has_saved,
+            "source": "env" if has_env else ("saved" if has_saved else None),
+        }
+    result["ollama"] = {"configured": True, "source": "local"}
+    return result
+
+
+# ── Session endpoints ────────────────────────────────────────────────────────
+
+@app.get("/sessions")
+def get_sessions():
+    """List all saved sessions."""
+    return list_sessions()
+
+
+@app.delete("/sessions/{session_id}")
+def remove_session(session_id: str):
+    """Delete a saved session."""
+    if delete_session(session_id):
+        return {"deleted": True}
+    raise HTTPException(status_code=404, detail="Session not found")

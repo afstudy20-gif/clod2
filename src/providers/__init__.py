@@ -1,8 +1,9 @@
-from .base import BaseProvider, Message, ToolCall, ToolResult
+from .base import BaseProvider, Message, ToolCall, ToolEvent, ToolResult
 from .anthropic_provider import AnthropicProvider
 from .openai_provider import OpenAIProvider, GroqProvider, MistralProvider, DeepSeekProvider, OllamaProvider
 from .gemini_provider import GeminiProvider
 from .cohere_provider import CohereProvider
+from .openrouter_provider import OpenRouterProvider
 
 PROVIDERS = {
     # Anthropic Claude
@@ -33,6 +34,9 @@ PROVIDERS = {
 
     # Cohere
     "cohere": CohereProvider,
+
+    # OpenRouter (aggregator — many providers via one API)
+    "openrouter": OpenRouterProvider,
 }
 
 

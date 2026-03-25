@@ -1,14 +1,18 @@
 # CClaude — Multi-Provider AI Coding Assistant
 
-A terminal-based AI coding assistant (Claude Code alternative) that works with **Anthropic Claude**, **OpenAI ChatGPT**, and **Google Gemini** — using your own API keys.
+A terminal-based AI coding assistant (Claude Code alternative) that works with **Anthropic Claude**, **OpenAI ChatGPT**, **Google Gemini**, **Groq**, **Mistral**, **DeepSeek**, **Cohere**, and **Ollama** — using your own API keys.
 
 ## Features
 
-- **Multi-provider**: Switch between Claude, GPT-4o, and Gemini in one session
+- **Multi-provider**: Switch between 8 providers in one session
 - **Agentic tool use**: reads/writes/edits files, runs bash commands, searches code
-- **Context management**: automatically trims history to stay within token limits
-- **Streaming**: responses stream in real time
-- **Persistent history**: command history saved across sessions
+- **Session resume**: Save and load conversation history across restarts
+- **Project-aware**: Auto-detects project root, resolves paths relative to it
+- **Modes**: Normal, Explore (read-only), and Plan (plan then execute)
+- **Loop mode**: Run prompts on a recurring interval
+- **Interactive model picker**: Browse and switch models easily
+- **Streaming**: Responses stream in real time with tool execution indicators
+- **Context management**: Automatically trims history to stay within token limits
 
 ## Quick Start
 
@@ -21,8 +25,6 @@ pip install -e .
 ```
 
 ### 2. Set API Keys
-
-Copy `.env.example` to `.env` and add your keys:
 
 ```bash
 cp .env.example .env
@@ -46,49 +48,69 @@ python main.py
 # Use OpenAI
 python main.py --provider openai
 
-# Use Gemini
-python main.py --provider gemini
-
-# Specify a model
+# Specify model
 python main.py --provider openai --model gpt-4o-mini
 
-# Pass API key directly (one-time)
-python main.py --provider claude --key sk-ant-...
+# Resume last session
+python main.py --resume
+
+# Set project directory explicitly
+python main.py --project /path/to/project
 ```
 
-## In-Session Commands
+## Commands
 
+### Core
 | Command | Description |
 |---------|-------------|
-| `/help` | Show help |
+| `/help` | Show all commands |
 | `/reset` | Clear conversation history |
-| `/model <name>` | Switch model |
+| `/model [name]` | Switch model (interactive picker if no name given) |
+| `/models` | List available models for current provider |
 | `/provider <name>` | Switch provider |
-| `/models` | List models for current provider |
 | `/key <api_key>` | Update API key |
-| `/exit` | Quit |
+| `/exit` | Quit (auto-saves active session) |
+
+### Modes
+| Command | Description |
+|---------|-------------|
+| `/explore` | Toggle explore mode — read-only tools, explains code |
+| `/plan <request>` | Plan mode — explores, produces plan, asks approval, then executes |
+| `/normal` | Return to normal mode |
+
+### Sessions
+| Command | Description |
+|---------|-------------|
+| `/session save [name]` | Save current conversation |
+| `/session load <name>` | Load a saved session |
+| `/session list` | List all saved sessions |
+| `/session delete <name>` | Delete a session |
+
+### Project
+| Command | Description |
+|---------|-------------|
+| `/project` | Show current project root |
+| `/project set <path>` | Set project root directory |
+
+### Loop
+| Command | Description |
+|---------|-------------|
+| `/loop <secs> <prompt>` | Run a prompt every N seconds |
+| `/stop` | Stop the active loop |
 
 ## Available Tools
 
-The assistant has access to these tools (function calling):
+| Tool | Description | Mode |
+|------|-------------|------|
+| `read_file` | Read file contents with line numbers | all |
+| `write_file` | Create or overwrite a file | normal only |
+| `edit_file` | Replace a unique string in a file | normal only |
+| `bash` | Run shell commands | normal only |
+| `glob` | Find files by pattern (e.g. `**/*.py`) | all |
+| `grep` | Search file contents with regex | all |
+| `list_dir` | List directory contents | all |
 
-| Tool | Description |
-|------|-------------|
-| `read_file` | Read file contents with line numbers |
-| `write_file` | Create or overwrite a file |
-| `edit_file` | Replace a unique string in a file |
-| `bash` | Run shell commands |
-| `glob` | Find files by pattern (e.g. `**/*.py`) |
-| `grep` | Search file contents with regex |
-| `list_dir` | List directory contents |
-
-## Cost Tips
-
-API costs depend on token usage. To keep costs low:
-
-- The assistant uses **tools to search** for relevant files rather than reading everything
-- **Context trimming** automatically drops old messages when nearing token limits
-- Use cheaper models for simple tasks: `gpt-4o-mini`, `claude-haiku-4-5`, `gemini-1.5-flash`
+In **explore** and **plan** modes, only read-only tools (read_file, glob, grep, list_dir) are available.
 
 ## Providers & Models
 
@@ -103,74 +125,28 @@ API costs depend on token usage. To keep costs low:
 | **Cohere** | `cohere` | `COHERE_API_KEY` | $ |
 | **Ollama** | `ollama`, `local` | *(none — local)* | free |
 
-### Anthropic (Claude)
-- `claude-sonnet-4-6` ← default, best balance
-- `claude-opus-4-6` ← most capable
-- `claude-haiku-4-5-20251001` ← fastest/cheapest
-
-### OpenAI (ChatGPT)
-- `gpt-4o` ← default
-- `gpt-4o-mini` ← cheaper
-- `o1`, `o3-mini` ← reasoning models
-
-### Google (Gemini)
-- `gemini-2.0-flash` ← default, fast
-- `gemini-1.5-pro` ← most capable
-- `gemini-1.5-flash` ← cheapest
-
-### Groq (free tier, very fast)
-- `llama-3.3-70b-versatile` ← default
-- `llama-3.1-8b-instant` ← fastest
-- `mixtral-8x7b-32768`
-
-### Mistral AI
-- `mistral-large-latest` ← default
-- `codestral-latest` ← optimized for code
-- `open-mistral-nemo` ← small/cheap
-
-### DeepSeek (cheapest paid option)
-- `deepseek-chat` ← default
-- `deepseek-reasoner` ← reasoning model
-
-### Cohere
-- `command-r-plus` ← default, best
-- `command-r` ← cheaper
-- `command-light` ← fastest
-
-### Ollama (100% local, free)
-```bash
-# Install Ollama first: https://ollama.com
-ollama pull llama3.2         # download a model
-python main.py --provider ollama --model llama3.2
-```
-- `llama3.2`, `llama3.1`, `codellama`, `mistral`, `qwen2.5-coder`, `phi4`, `deepseek-r1`
-
 ## Architecture
 
 ```
-main.py                  ← CLI entry point (Click + Rich + prompt_toolkit)
+main.py                  <- CLI entry point (Click + Rich + prompt_toolkit)
+api.py                   <- FastAPI web server with SSE streaming
+static/index.html        <- Web UI
 src/
   providers/
-    base.py              ← Abstract BaseProvider interface
+    base.py              <- BaseProvider interface + data models
     anthropic_provider.py
     openai_provider.py
     gemini_provider.py
+    cohere_provider.py
   tools/
-    implementations.py   ← Tool functions (read/write/edit/bash/glob/grep)
-    registry.py          ← Tool schemas + handler registry
+    implementations.py   <- Tool functions (read/write/edit/bash/glob/grep)
+    registry.py          <- Tool schemas + handler registry (with readonly tags)
+    github_tools.py      <- GitHub REST API tools
   core/
-    agent.py             ← Agentic loop (streams response, handles tool calls)
-    config.py            ← API key management (.env / config file)
-    context.py           ← Token budget & history trimming
+    agent.py             <- Agentic loop with mode support (normal/explore/plan)
+    config.py            <- API key + model preference management
+    context.py           <- Token budget & history trimming
+    project.py           <- Project root detection
+    session.py           <- Session save/load/list/delete
+    loop.py              <- Loop mode runner (background thread)
 ```
-
-## Alternatives to Consider
-
-Before building your own, these open-source projects do the same thing with your own API key:
-
-- **[Aider](https://aider.chat/)** — CLI pair programmer, supports all major providers
-- **[Cline](https://github.com/cline/cline)** — VS Code extension, autonomous agent
-- **[Continue](https://continue.dev/)** — VS Code/JetBrains extension
-- **[Open Interpreter](https://github.com/OpenInterpreter/open-interpreter)** — General-purpose agent
-
-This project (`CClaude`) is a **from-scratch implementation** for learning and customization.

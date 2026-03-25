@@ -1,7 +1,7 @@
 """Agentic loop: sends messages, handles tool calls, loops until done."""
 from typing import Iterator
 
-from ..providers.base import BaseProvider, Message, ToolCall, ToolResult
+from ..providers.base import BaseProvider, Message, ToolCall, ToolEvent, ToolResult
 from ..tools.registry import ToolRegistry
 from .context import trim_history
 
@@ -23,6 +23,34 @@ Guidelines:
 - Always show the user what you're doing when using tools
 """
 
+EXPLORE_SYSTEM_PROMPT = """You are in EXPLORE MODE. Help the user understand the codebase.
+
+You can ONLY use read-only tools: read_file, glob, grep, list_dir, github_read_file, github_list_dir, github_search_code.
+DO NOT modify any files. Focus on explaining code, architecture, patterns, and relationships.
+When the user asks about code, read the relevant files and explain clearly.
+Provide thorough analysis with file paths and line references.
+"""
+
+PLAN_SYSTEM_PROMPT = """You are in PLAN MODE. Your task is to explore the codebase using read-only tools and produce a structured implementation plan.
+
+DO NOT modify any files. You may only use read-only tools: read_file, glob, grep, list_dir.
+
+After exploring, produce a plan in this format:
+
+## Plan
+1. [Step with file path and description of change]
+2. ...
+
+## Files to Modify
+- path/to/file.py - description of changes
+
+## Files to Create
+- path/to/new_file.py - purpose
+
+## Risks
+- potential issues or edge cases
+"""
+
 
 class Agent:
     def __init__(
@@ -30,15 +58,41 @@ class Agent:
         provider: BaseProvider,
         registry: ToolRegistry,
         max_tool_rounds: int = 20,
+        project_root: str | None = None,
     ):
         self.provider = provider
         self.registry = registry
         self.max_tool_rounds = max_tool_rounds
         self.history: list[Message] = []
+        self.mode: str = "normal"  # "normal", "explore", "plan"
+        self.project_root = project_root
+        self.session_id: str | None = None
 
-    def chat(self, user_message: str) -> Iterator[str]:
-        """Send a user message and yield response text chunks."""
+    def _get_system_prompt(self) -> str:
+        if self.mode == "explore":
+            base = EXPLORE_SYSTEM_PROMPT
+        elif self.mode == "plan":
+            base = PLAN_SYSTEM_PROMPT
+        else:
+            base = SYSTEM_PROMPT
+
+        if self.project_root:
+            base += f"\n\nProject root: {self.project_root}"
+            base += "\nAll relative paths should be resolved from this directory."
+
+        return base
+
+    def _get_tool_schemas(self) -> list[dict]:
+        if self.mode in ("explore", "plan"):
+            return self.registry.get_schemas(readonly_only=True)
+        return self.registry.get_schemas()
+
+    def chat(self, user_message: str) -> Iterator[str | ToolEvent]:
+        """Send a user message and yield response text chunks and ToolEvents."""
         self.history.append(Message(role="user", content=user_message))
+
+        system_prompt = self._get_system_prompt()
+        tool_schemas = self._get_tool_schemas()
 
         for _ in range(self.max_tool_rounds):
             tool_calls_seen: list[ToolCall] = []
@@ -49,8 +103,8 @@ class Agent:
 
             for item in self.provider.stream_response(
                 active_history,
-                self.registry.get_schemas(),
-                SYSTEM_PROMPT,
+                tool_schemas,
+                system_prompt,
             ):
                 if isinstance(item, str):
                     yield item
@@ -74,14 +128,25 @@ class Agent:
             # Execute tools and collect results
             tool_results = []
             for tc in tool_calls_seen:
-                yield f"\n[Tool: {tc.name}({_summarize_args(tc.arguments)})]\n"
+                yield ToolEvent(
+                    type="start",
+                    tool_name=tc.name,
+                    arguments=tc.arguments,
+                )
                 result = self.registry.execute(tc.name, tc.arguments)
-                yield f"```\n{result[:3000]}\n```\n"
+                is_error = result.startswith("Error:")
+                yield ToolEvent(
+                    type="result",
+                    tool_name=tc.name,
+                    arguments=tc.arguments,
+                    result=result[:3000],
+                    is_error=is_error,
+                )
                 tool_results.append(
                     ToolResult(
                         tool_call_id=tc.id,
                         content=result,
-                        is_error=result.startswith("Error:"),
+                        is_error=is_error,
                     )
                 )
 

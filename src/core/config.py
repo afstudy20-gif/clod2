@@ -39,6 +39,7 @@ def get_api_key(provider: str, config: dict | None = None) -> str | None:
         "mistral": "MISTRAL_API_KEY",
         "deepseek": "DEEPSEEK_API_KEY",
         "cohere": "COHERE_API_KEY",
+        "openrouter": "OPENROUTER_API_KEY",
         # Ollama is local — no key needed
         "ollama": None,
         "local": None,
@@ -67,3 +68,16 @@ def set_api_key(provider: str, key: str):
     config.setdefault("api_keys", {})[provider.lower()] = key
     save_config(config)
     print(f"Saved API key for {provider} to {CONFIG_FILE}")
+
+
+def get_last_model(provider: str) -> str | None:
+    """Get the last-used model for a provider."""
+    config = load_config()
+    return config.get("last_models", {}).get(provider.lower())
+
+
+def set_last_model(provider: str, model: str):
+    """Persist the last-used model for a provider."""
+    config = load_config()
+    config.setdefault("last_models", {})[provider.lower()] = model
+    save_config(config)

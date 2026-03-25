@@ -11,14 +11,24 @@ class GeminiProvider(BaseProvider):
     name = "Google (Gemini)"
 
     DEFAULT_MODELS = {
+        "gemini-2.5-pro": "gemini-2.5-pro-preview-05-06",
+        "gemini-2.5-flash": "gemini-2.5-flash-preview-04-17",
         "gemini-2.0-flash": "gemini-2.0-flash",
-        "gemini-1.5-pro": "gemini-1.5-pro",
-        "gemini-1.5-flash": "gemini-1.5-flash",
-        "gemini-2.0-flash-thinking": "gemini-2.0-flash-thinking-exp",
+        "gemini-2.0-flash-lite": "gemini-2.0-flash-lite",
     }
 
     def __init__(self, api_key: str, model: str | None = None):
-        super().__init__(api_key, model or "gemini-2.0-flash")
+        super().__init__(api_key, model or "gemini-2.5-flash-preview-04-17")
+        # Check for OAuth credentials first
+        if api_key == "__oauth__":
+            try:
+                from ..core.auth import get_google_credentials
+                creds = get_google_credentials()
+                if creds:
+                    genai.configure(credentials=creds)
+                    return
+            except Exception:
+                pass
         genai.configure(api_key=api_key)
 
     def stream_response(

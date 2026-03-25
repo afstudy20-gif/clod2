@@ -87,15 +87,18 @@ class OpenAIProvider(OpenAICompatibleProvider):
     BASE_URL = None  # uses default openai.com endpoint
 
     DEFAULT_MODELS = {
+        "gpt-4.1": "gpt-4.1",
+        "gpt-4.1-mini": "gpt-4.1-mini",
+        "gpt-4.1-nano": "gpt-4.1-nano",
         "gpt-4o": "gpt-4o",
         "gpt-4o-mini": "gpt-4o-mini",
-        "gpt-4-turbo": "gpt-4-turbo",
-        "o1": "o1",
+        "o3": "o3",
+        "o4-mini": "o4-mini",
         "o3-mini": "o3-mini",
     }
 
     def __init__(self, api_key: str, model: str | None = None):
-        super().__init__(api_key, model or "gpt-4o")
+        super().__init__(api_key, model or "gpt-4.1")
 
 
 # ── Groq ──────────────────────────────────────────────────────────────────────
@@ -107,7 +110,7 @@ class GroqProvider(OpenAICompatibleProvider):
     DEFAULT_MODELS = {
         "llama-3.3-70b-versatile": "llama-3.3-70b-versatile",
         "llama-3.1-8b-instant": "llama-3.1-8b-instant",
-        "mixtral-8x7b-32768": "mixtral-8x7b-32768",
+        "qwen/qwen3-32b": "qwen/qwen3-32b",
         "gemma2-9b-it": "gemma2-9b-it",
         "llama3-groq-70b-8192-tool-use-preview": "llama3-groq-70b-8192-tool-use-preview",
     }
@@ -124,10 +127,9 @@ class MistralProvider(OpenAICompatibleProvider):
 
     DEFAULT_MODELS = {
         "mistral-large-latest": "mistral-large-latest",
+        "mistral-medium-latest": "mistral-medium-latest",
         "mistral-small-latest": "mistral-small-latest",
         "codestral-latest": "codestral-latest",
-        "open-mixtral-8x22b": "open-mixtral-8x22b",
-        "open-mistral-nemo": "open-mistral-nemo",
     }
 
     def __init__(self, api_key: str, model: str | None = None):
@@ -157,12 +159,12 @@ class OllamaProvider(OpenAICompatibleProvider):
 
     DEFAULT_MODELS = {
         "llama3.2": "llama3.2",
-        "llama3.1": "llama3.1",
-        "codellama": "codellama",
-        "mistral": "mistral",
         "qwen2.5-coder": "qwen2.5-coder",
         "phi4": "phi4",
         "deepseek-r1": "deepseek-r1",
+        "mistral": "mistral",
+        "codellama": "codellama",
+        "gemma2": "gemma2",
     }
 
     def __init__(self, api_key: str = "ollama", model: str | None = None, base_url: str | None = None):

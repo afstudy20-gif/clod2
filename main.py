@@ -2,10 +2,12 @@
 """
 CClaude - A multi-provider AI coding assistant (Claude Code alternative)
 
-Supports: Anthropic Claude, OpenAI ChatGPT, Google Gemini
+Supports: Anthropic Claude, OpenAI ChatGPT, Google Gemini, Groq, Mistral, DeepSeek, Ollama, Cohere
 """
 import os
 import sys
+import threading
+import uuid
 
 import click
 from prompt_toolkit import PromptSession
@@ -17,11 +19,24 @@ from rich.panel import Panel
 from rich.text import Text
 
 from src.core.agent import Agent
-from src.core.config import get_api_key, load_config, set_api_key
+from src.core.auth import OAUTH_PROVIDERS, login_openrouter, login_google, get_google_credentials
+from src.core.config import get_api_key, get_last_model, load_config, set_api_key, set_last_model
+from src.core.loop import LoopRunner
+from src.core.project import detect_project_root, project_name
+from src.core.session import (
+    delete_session,
+    get_last_session_id,
+    list_sessions,
+    load_session,
+    save_session,
+)
 from src.providers import PROVIDERS, get_provider
+from src.providers.base import ToolEvent
 from src.tools import get_default_registry
+from src.tools.implementations import set_project_root
 
 console = Console()
+output_lock = threading.Lock()
 
 HISTORY_FILE = os.path.expanduser("~/.cclaude/history")
 os.makedirs(os.path.dirname(HISTORY_FILE), exist_ok=True)
@@ -49,20 +64,20 @@ PROVIDER_COLORS = {
     "ollama": "bright_green",
     "local": "bright_green",
     "cohere": "bright_magenta",
+    "openrouter": "bright_yellow",
 }
 
 
-def print_banner(provider_name: str, model: str):
+def print_banner(provider_name: str, model: str, project_root: str | None = None):
     color = PROVIDER_COLORS.get(provider_name.lower(), "white")
     console.print(BANNER, style=f"bold {color}")
-    console.print(
-        Panel(
-            f"Provider: [bold]{provider_name}[/bold]  |  Model: [bold]{model}[/bold]\n"
-            "Commands: /help  /reset  /model <name>  /provider <name>  /exit",
-            title="CClaude - Multi-API Coding Assistant",
-            border_style=color,
-        )
+    info = (
+        f"Provider: [bold]{provider_name}[/bold]  |  Model: [bold]{model}[/bold]\n"
     )
+    if project_root:
+        info += f"Project: [bold]{project_name(project_root)}[/bold] ({project_root})\n"
+    info += "Commands: /help  /reset  /model  /provider  /explore  /plan  /session  /exit"
+    console.print(Panel(info, title="CClaude - Multi-API Coding Assistant", border_style=color))
 
 
 def get_prompt_style(provider_name: str) -> Style:
@@ -75,42 +90,109 @@ def get_prompt_style(provider_name: str) -> Style:
         "deepseek": "#0055ff",
         "ollama": "#00cc44", "local": "#00cc44",
         "cohere": "#cc0088",
+        "openrouter": "#ccaa00",
     }
     color = color_map.get(provider_name.lower(), "#ffffff")
     return Style.from_dict({"prompt": color})
+
+
+def build_prompt_text(provider_name: str, model: str, mode: str, proj_name: str | None) -> str:
+    """Build the REPL prompt string."""
+    parts = [provider_name]
+    if proj_name:
+        parts.append(proj_name)
+    short_model = model.split("/")[-1]  # strip provider prefix if any
+    if len(short_model) > 25:
+        short_model = short_model[:22] + "..."
+    parts.append(short_model)
+    if mode != "normal":
+        parts.append(mode)
+    return f"\n[{'|'.join(parts)}]> "
 
 
 def print_help():
     console.print(
         Panel(
             """[bold]Commands:[/bold]
-  /help              Show this help
-  /reset             Clear conversation history
-  /model <name>      Switch model (e.g. /model gpt-4o)
-  /provider <name>   Switch provider (claude/openai/gemini)
-  /models            List available models for current provider
-  /key <key>         Set API key for current provider
-  /exit or /quit     Exit
+  /help                    Show this help
+  /reset                   Clear conversation history
+  /model [name]            Switch model or pick interactively
+  /provider <name>         Switch provider
+  /models                  List available models
+  /key <key>               Set API key for current provider
+
+[bold]Modes:[/bold]
+  /explore                 Toggle explore mode (read-only, explains code)
+  /plan <request>          Plan mode: explore, plan, then execute on approval
+  /normal                  Return to normal mode
+
+[bold]Sessions:[/bold]
+  /session save [name]     Save current session
+  /session load <name>     Load a saved session
+  /session list            List saved sessions
+  /session delete <name>   Delete a saved session
+
+[bold]Project:[/bold]
+  /project                 Show current project root
+  /project set <path>      Set project root
+
+[bold]Loop:[/bold]
+  /loop <secs> <prompt>    Run a prompt every N seconds
+  /stop                    Stop the active loop
+
+[bold]Auth:[/bold]
+  /login [provider]        Sign in via OAuth (openrouter, gemini)
+  /key <key>               Set API key manually
+
+[bold]Other:[/bold]
+  /exit or /quit           Exit
 
 [bold]Providers:[/bold]
   claude / anthropic  →  Anthropic Claude models
   openai / chatgpt    →  OpenAI GPT models
   gemini / google     →  Google Gemini models
+  openrouter          →  Many models via single sign-in (OAuth)
   groq                →  Groq (fast, free tier)
   mistral             →  Mistral AI
   deepseek            →  DeepSeek (very cheap)
-  ollama / local      →  Ollama (local, free — no API key needed)
+  ollama / local      →  Ollama (local, free)
   cohere              →  Cohere Command-R
-
-[bold]API Key Setup:[/bold]
-  Set env vars: ANTHROPIC_API_KEY, OPENAI_API_KEY, GOOGLE_API_KEY
-  Or use:  /key YOUR_API_KEY
-  Or create a .env file in the working directory
 """,
             title="Help",
             border_style="yellow",
         )
     )
+
+
+def stream_response_to_console(agent: Agent, user_input: str):
+    """Stream agent response to console with Rich formatting for tools."""
+    console.print()
+    for chunk in agent.chat(user_input):
+        if isinstance(chunk, ToolEvent):
+            if chunk.type == "start":
+                args_summary = _summarize_args(chunk.arguments)
+                console.print(f"  [dim]⚙ {chunk.tool_name}({args_summary})[/dim]")
+            elif chunk.type == "result":
+                if chunk.is_error:
+                    console.print(f"  [red]✗ Error: {(chunk.result or '')[:200]}[/red]")
+                else:
+                    result_preview = (chunk.result or "")[:300]
+                    if len(result_preview) > 100:
+                        result_preview = result_preview[:100] + "..."
+                    console.print(f"  [green]✓[/green] [dim]{result_preview}[/dim]")
+        else:
+            console.print(chunk, end="", markup=False)
+    console.print()
+
+
+def _summarize_args(args: dict) -> str:
+    parts = []
+    for k, v in args.items():
+        s = str(v)
+        if len(s) > 50:
+            s = s[:47] + "..."
+        parts.append(f"{k}={s!r}")
+    return ", ".join(parts)
 
 
 @click.command()
@@ -119,7 +201,17 @@ def print_help():
 @click.option("--key", "-k", default=None, help="API key (overrides env var)")
 @click.option("--set-key", is_flag=True, help="Save API key to config")
 @click.option("--list-providers", is_flag=True, help="List available providers and exit")
-def main(provider: str, model: str | None, key: str | None, set_key: bool, list_providers: bool):
+@click.option("--project", "-d", default=None, help="Project directory (auto-detected if omitted)")
+@click.option("--resume", "-r", is_flag=True, help="Resume the last session")
+def main(
+    provider: str,
+    model: str | None,
+    key: str | None,
+    set_key: bool,
+    list_providers: bool,
+    project: str | None,
+    resume: bool,
+):
     """CClaude - Multi-provider AI coding assistant."""
 
     if list_providers:
@@ -144,29 +236,60 @@ def main(provider: str, model: str | None, key: str | None, set_key: bool, list_
     if set_key and key:
         set_api_key(provider, key)
 
+    # Resolve model: explicit > last-used > provider default
+    if not model:
+        model = get_last_model(provider)
+
     try:
         ai_provider = get_provider(provider, api_key=api_key, model=model)
     except ValueError as e:
         console.print(f"[red]{e}[/red]")
         sys.exit(1)
 
+    # Project root detection
+    proj_root = project or detect_project_root()
+    if proj_root:
+        set_project_root(proj_root)
+    proj = project_name(proj_root) if proj_root else None
+
     registry = get_default_registry()
-    agent = Agent(ai_provider, registry)
+    agent = Agent(ai_provider, registry, project_root=proj_root)
+    session_id: str | None = None
 
-    print_banner(provider, ai_provider.model)
+    # Resume last session if requested
+    if resume:
+        last_id = get_last_session_id(project=proj_root or "")
+        if last_id:
+            try:
+                messages, meta = load_session(last_id)
+                agent.history = messages
+                session_id = last_id
+                console.print(f"[green]Resumed session: {last_id} ({len(messages)} messages)[/green]")
+            except Exception as e:
+                console.print(f"[yellow]Could not resume session: {e}[/yellow]")
 
-    session = PromptSession(
+    print_banner(provider, ai_provider.model, proj_root)
+
+    prompt_session = PromptSession(
         history=FileHistory(HISTORY_FILE),
         style=get_prompt_style(provider),
     )
 
     current_provider_name = provider
+    loop_runner = LoopRunner()
 
     while True:
         try:
-            user_input = session.prompt(f"\n[{current_provider_name}]> ").strip()
+            prompt_text = build_prompt_text(
+                current_provider_name, ai_provider.model, agent.mode, proj
+            )
+            user_input = prompt_session.prompt(prompt_text).strip()
         except (KeyboardInterrupt, EOFError):
-            console.print("\n[dim]Goodbye![/dim]")
+            # Auto-save on exit if session is active
+            if session_id and agent.history:
+                save_session(session_id, agent.history, current_provider_name, ai_provider.model, proj_root or "")
+                console.print(f"\n[dim]Session auto-saved: {session_id}[/dim]")
+            console.print("[dim]Goodbye![/dim]")
             break
 
         if not user_input:
@@ -179,6 +302,9 @@ def main(provider: str, model: str | None, key: str | None, set_key: bool, list_
             arg = parts[1] if len(parts) > 1 else ""
 
             if cmd in ("/exit", "/quit", "/q"):
+                if session_id and agent.history:
+                    save_session(session_id, agent.history, current_provider_name, ai_provider.model, proj_root or "")
+                    console.print(f"[dim]Session auto-saved: {session_id}[/dim]")
                 console.print("[dim]Goodbye![/dim]")
                 break
 
@@ -192,17 +318,36 @@ def main(provider: str, model: str | None, key: str | None, set_key: bool, list_
             elif cmd == "/models":
                 models = ai_provider.list_models()
                 console.print("[bold]Available models:[/bold]")
-                for m in models:
+                for i, m in enumerate(models, 1):
                     marker = " [green]<- current[/green]" if m == ai_provider.model else ""
-                    console.print(f"  {m}{marker}")
+                    console.print(f"  {i}. {m}{marker}")
 
             elif cmd == "/model":
                 if not arg:
-                    console.print(f"[yellow]Current model: {ai_provider.model}[/yellow]")
-                else:
-                    ai_provider.model = arg
-                    agent.reset()
-                    console.print(f"[green]Switched to model: {arg} (history cleared)[/green]")
+                    # Interactive model picker
+                    models = ai_provider.list_models()
+                    console.print("[bold]Select model:[/bold]")
+                    for i, m in enumerate(models, 1):
+                        marker = " [green]<- current[/green]" if m == ai_provider.model else ""
+                        console.print(f"  {i}. {m}{marker}")
+                    try:
+                        choice = prompt_session.prompt("Enter number or model name: ").strip()
+                        if choice.isdigit():
+                            idx = int(choice) - 1
+                            if 0 <= idx < len(models):
+                                arg = models[idx]
+                            else:
+                                console.print("[red]Invalid selection.[/red]")
+                                continue
+                        else:
+                            arg = choice
+                    except (KeyboardInterrupt, EOFError):
+                        continue
+
+                ai_provider.model = arg
+                set_last_model(current_provider_name, arg)
+                agent.reset()
+                console.print(f"[green]Switched to model: {arg} (history cleared)[/green]")
 
             elif cmd == "/provider":
                 if not arg:
@@ -213,9 +358,10 @@ def main(provider: str, model: str | None, key: str | None, set_key: bool, list_
                         console.print(f"[red]No API key found for '{arg}'. Set the env var first.[/red]")
                     else:
                         try:
-                            ai_provider = get_provider(arg, api_key=new_key)
+                            new_model = get_last_model(arg)
+                            ai_provider = get_provider(arg, api_key=new_key, model=new_model)
                             registry = get_default_registry()
-                            agent = Agent(ai_provider, registry)
+                            agent = Agent(ai_provider, registry, project_root=proj_root)
                             current_provider_name = arg
                             console.print(
                                 f"[green]Switched to {ai_provider.name} ({ai_provider.model})[/green]"
@@ -228,10 +374,240 @@ def main(provider: str, model: str | None, key: str | None, set_key: bool, list_
                     console.print("[yellow]Usage: /key YOUR_API_KEY[/yellow]")
                 else:
                     set_api_key(current_provider_name, arg)
-                    # Reinitialize with new key
                     ai_provider = get_provider(current_provider_name, api_key=arg, model=ai_provider.model)
-                    agent = Agent(ai_provider, registry)
+                    agent = Agent(ai_provider, registry, project_root=proj_root)
                     console.print(f"[green]API key updated for {current_provider_name}[/green]")
+
+            # ── OAuth login ───────────────────────────────────────────────
+
+            elif cmd == "/login":
+                if not arg:
+                    # Show available OAuth providers
+                    console.print("[bold]Available OAuth sign-in:[/bold]")
+                    for key, info in OAUTH_PROVIDERS.items():
+                        if key in ("gemini",):
+                            continue  # Skip alias
+                        note = f"  [dim]{info.get('setup_note', '')}[/dim]" if info.get("setup_note") else ""
+                        console.print(f"  /login {key:12s}  {info['description']}{note}")
+                else:
+                    target = arg.strip().lower()
+                    if target not in OAUTH_PROVIDERS:
+                        console.print(f"[red]No OAuth flow for '{target}'. Try: openrouter, gemini[/red]")
+                    else:
+                        info = OAUTH_PROVIDERS[target]
+                        console.print(f"[cyan]Opening browser for {info['name']} sign-in...[/cyan]")
+                        result = info["login"]()
+                        if result:
+                            console.print(f"[green]Signed in to {info['name']} successfully![/green]")
+                            # Auto-switch to the provider
+                            if target == "openrouter":
+                                try:
+                                    ai_provider = get_provider("openrouter", api_key=result)
+                                    registry = get_default_registry()
+                                    agent = Agent(ai_provider, registry, project_root=proj_root)
+                                    current_provider_name = "openrouter"
+                                    console.print(f"[green]Switched to OpenRouter ({ai_provider.model})[/green]")
+                                except ValueError as e:
+                                    console.print(f"[red]{e}[/red]")
+                            elif target in ("google", "gemini"):
+                                try:
+                                    ai_provider = get_provider("gemini", api_key="__oauth__")
+                                    registry = get_default_registry()
+                                    agent = Agent(ai_provider, registry, project_root=proj_root)
+                                    current_provider_name = "gemini"
+                                    console.print(f"[green]Switched to Gemini via OAuth ({ai_provider.model})[/green]")
+                                except ValueError as e:
+                                    console.print(f"[red]{e}[/red]")
+                        else:
+                            msg = "[red]Sign-in failed or was cancelled.[/red]"
+                            if info.get("setup_note"):
+                                msg += f"\n[yellow]{info['setup_note']}[/yellow]"
+                            console.print(msg)
+
+            # ── Mode commands ────────────────────────────────────────────────
+
+            elif cmd == "/explore":
+                if agent.mode == "explore":
+                    agent.mode = "normal"
+                    console.print("[green]Exited explore mode.[/green]")
+                else:
+                    agent.mode = "explore"
+                    console.print(
+                        "[cyan]Entered explore mode.[/cyan] Read-only tools only. "
+                        "Use /normal or /explore again to exit."
+                    )
+
+            elif cmd == "/normal":
+                agent.mode = "normal"
+                console.print("[green]Switched to normal mode.[/green]")
+
+            elif cmd == "/plan":
+                if not arg:
+                    console.print("[yellow]Usage: /plan <describe what you want to build>[/yellow]")
+                else:
+                    # Phase 1: Plan (read-only)
+                    agent.mode = "plan"
+                    console.print("[cyan]Planning...[/cyan]")
+                    plan_parts = []
+                    try:
+                        for chunk in agent.chat(arg):
+                            if isinstance(chunk, ToolEvent):
+                                if chunk.type == "start":
+                                    console.print(f"  [dim]⚙ {chunk.tool_name}[/dim]")
+                            else:
+                                plan_parts.append(chunk)
+                                console.print(chunk, end="", markup=False)
+                        console.print()
+                    except KeyboardInterrupt:
+                        console.print("\n[yellow](planning interrupted)[/yellow]")
+                        agent.mode = "normal"
+                        continue
+
+                    plan_text = "".join(plan_parts)
+                    console.print()
+                    console.print(Panel(
+                        Markdown(plan_text),
+                        title="Implementation Plan",
+                        border_style="cyan",
+                    ))
+
+                    # Phase 2: Ask for approval
+                    try:
+                        approval = prompt_session.prompt("\nExecute this plan? [y/n]: ").strip().lower()
+                    except (KeyboardInterrupt, EOFError):
+                        approval = "n"
+
+                    if approval in ("y", "yes"):
+                        agent.mode = "normal"
+                        console.print("[green]Executing plan...[/green]")
+                        try:
+                            stream_response_to_console(agent, "Execute the plan you just created above. Implement all the changes step by step.")
+                        except KeyboardInterrupt:
+                            console.print("\n[yellow](execution interrupted)[/yellow]")
+                    else:
+                        agent.mode = "normal"
+                        console.print("[yellow]Plan discarded. Back to normal mode.[/yellow]")
+
+            # ── Session commands ──────────────────────────────────────────────
+
+            elif cmd == "/session":
+                sub_parts = arg.split(maxsplit=1)
+                sub_cmd = sub_parts[0].lower() if sub_parts else ""
+                sub_arg = sub_parts[1] if len(sub_parts) > 1 else ""
+
+                if sub_cmd == "save":
+                    name = sub_arg or session_id or str(uuid.uuid4())[:8]
+                    save_session(name, agent.history, current_provider_name, ai_provider.model, proj_root or "")
+                    session_id = name
+                    console.print(f"[green]Session saved: {name}[/green]")
+
+                elif sub_cmd == "load":
+                    if not sub_arg:
+                        console.print("[yellow]Usage: /session load <name>[/yellow]")
+                    else:
+                        try:
+                            messages, meta = load_session(sub_arg)
+                            agent.history = messages
+                            session_id = sub_arg
+                            console.print(
+                                f"[green]Loaded session: {sub_arg} "
+                                f"({len(messages)} messages, provider: {meta.get('provider', '?')})[/green]"
+                            )
+                        except FileNotFoundError:
+                            console.print(f"[red]Session not found: {sub_arg}[/red]")
+
+                elif sub_cmd == "list":
+                    sessions = list_sessions()
+                    if not sessions:
+                        console.print("[dim]No saved sessions.[/dim]")
+                    else:
+                        console.print("[bold]Saved sessions:[/bold]")
+                        for s in sessions[:20]:
+                            active = " [green]<- active[/green]" if s["id"] == session_id else ""
+                            console.print(
+                                f"  {s['id']}  [{s.get('provider','')}:{s.get('model','')}]  "
+                                f"{s['messages']} msgs  {s.get('updated', '')[:16]}{active}"
+                            )
+
+                elif sub_cmd == "delete":
+                    if not sub_arg:
+                        console.print("[yellow]Usage: /session delete <name>[/yellow]")
+                    elif delete_session(sub_arg):
+                        if session_id == sub_arg:
+                            session_id = None
+                        console.print(f"[green]Deleted session: {sub_arg}[/green]")
+                    else:
+                        console.print(f"[red]Session not found: {sub_arg}[/red]")
+
+                else:
+                    console.print(
+                        "[yellow]Usage: /session save|load|list|delete [name][/yellow]"
+                    )
+
+            # ── Project commands ──────────────────────────────────────────────
+
+            elif cmd == "/project":
+                if not arg:
+                    if proj_root:
+                        console.print(f"[bold]Project:[/bold] {proj} ({proj_root})")
+                    else:
+                        console.print("[dim]No project detected. Use /project set <path>[/dim]")
+                elif arg.startswith("set "):
+                    new_root = arg[4:].strip()
+                    if os.path.isdir(new_root):
+                        proj_root = os.path.abspath(new_root)
+                        proj = project_name(proj_root)
+                        set_project_root(proj_root)
+                        agent.project_root = proj_root
+                        console.print(f"[green]Project root set to: {proj_root}[/green]")
+                    else:
+                        console.print(f"[red]Not a directory: {new_root}[/red]")
+                else:
+                    console.print("[yellow]Usage: /project or /project set <path>[/yellow]")
+
+            # ── Loop commands ─────────────────────────────────────────────────
+
+            elif cmd == "/loop":
+                loop_parts = arg.split(maxsplit=1)
+                if len(loop_parts) < 2:
+                    console.print("[yellow]Usage: /loop <seconds> <prompt>[/yellow]")
+                else:
+                    try:
+                        interval = float(loop_parts[0])
+                    except ValueError:
+                        console.print("[red]Invalid interval. Use a number of seconds.[/red]")
+                        continue
+                    loop_prompt = loop_parts[1]
+
+                    # Create a separate agent for the loop to avoid history conflicts
+                    loop_agent = Agent(ai_provider, registry, project_root=proj_root)
+
+                    def run_loop_iteration(prompt: str):
+                        with output_lock:
+                            console.print(f"\n[dim]--- loop: {prompt[:50]}... ---[/dim]")
+                            try:
+                                for chunk in loop_agent.chat(prompt):
+                                    if isinstance(chunk, ToolEvent):
+                                        if chunk.type == "start":
+                                            console.print(f"  [dim]⚙ {chunk.tool_name}[/dim]")
+                                    else:
+                                        console.print(chunk, end="", markup=False)
+                                console.print()
+                            except Exception as e:
+                                console.print(f"[red]Loop error: {e}[/red]")
+                            loop_agent.reset()
+
+                    loop_runner.start(loop_prompt, interval, run_loop_iteration)
+                    console.print(
+                        f"[green]Loop started: every {interval}s[/green] — use /stop to halt"
+                    )
+
+            elif cmd == "/stop":
+                if loop_runner.is_running:
+                    loop_runner.stop()
+                    console.print("[green]Loop stopped.[/green]")
+                else:
+                    console.print("[dim]No active loop.[/dim]")
 
             else:
                 console.print(f"[red]Unknown command: {cmd}[/red]. Type /help for help.")
@@ -239,16 +615,7 @@ def main(provider: str, model: str | None, key: str | None, set_key: bool, list_
 
         # Regular message - stream response
         try:
-            response_parts = []
-            console.print()
-            for chunk in agent.chat(user_input):
-                # Print tool blocks as-is (already formatted)
-                if chunk.startswith("\n[Tool:") or chunk.startswith("```"):
-                    console.print(chunk, end="")
-                else:
-                    console.print(chunk, end="", markup=False)
-                response_parts.append(chunk)
-            console.print()  # Final newline
+            stream_response_to_console(agent, user_input)
         except KeyboardInterrupt:
             console.print("\n[yellow](interrupted)[/yellow]")
         except Exception as e:

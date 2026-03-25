@@ -14,15 +14,14 @@ class CohereProvider(BaseProvider):
     name = "Cohere"
 
     DEFAULT_MODELS = {
+        "command-a-03-2025": "command-a-03-2025",
         "command-r-plus": "command-r-plus",
         "command-r": "command-r",
-        "command-r-plus-08-2024": "command-r-plus-08-2024",
-        "command-r-08-2024": "command-r-08-2024",
-        "command-light": "command-light",
+        "command-r7b-12-2024": "command-r7b-12-2024",
     }
 
     def __init__(self, api_key: str, model: str | None = None):
-        super().__init__(api_key, model or "command-r-plus")
+        super().__init__(api_key, model or "command-a-03-2025")
         self.client = cohere.Client(api_key=api_key)
 
     def stream_response(
