@@ -549,7 +549,10 @@
       </div>
       <div>
         <div class="field-label">Model</div>
-        <select id="model-select"></select>
+        <div style="display:flex;gap:4px;align-items:center;">
+          <select id="model-select" style="flex:1"></select>
+          <button id="refresh-models-btn" onclick="refreshModels()" title="Refresh models from provider API" style="background:#333;border:1px solid #555;color:#f90;padding:4px 8px;border-radius:6px;cursor:pointer;font-size:14px;">&#x21BB;</button>
+        </div>
       </div>
       <div style="display:flex;gap:6px;">
         <button class="settings-btn" onclick="openKeyModal()" style="flex:1">API Keys</button>
@@ -619,8 +622,8 @@
 </div>
 
 <script>
-// Models — kept in sync with backend providers
-const MODELS = {
+// Models — fallback defaults, overridden by backend on load
+let MODELS = {
   openai:     ['gpt-5.4','gpt-5.4-mini','gpt-5.4-nano','gpt-5.3-codex','gpt-4.1','gpt-4.1-mini','o3','o4-mini','o3-mini'],
   claude:     ['claude-sonnet-4-6','claude-opus-4-6','claude-haiku-4-5-20251001'],
   gemini:     ['gemini-3.1-pro-preview','gemini-3.1-flash-lite-preview','gemini-3-flash','gemini-2.5-pro','gemini-2.5-flash','gemini-2.5-flash-lite'],
@@ -664,6 +667,20 @@ marked.setOptions({ breaks: true, gfm: true });
 
 // Init
 async function init() {
+  // Fetch live models from backend (falls back to hardcoded MODELS)
+  try {
+    const provResp = await fetch('/providers');
+    if (provResp.ok) {
+      const data = await provResp.json();
+      for (const [key, info] of Object.entries(data)) {
+        if (info.models && info.models.length) {
+          MODELS[key] = info.models;
+        }
+        if (info.name) PROVIDER_NAMES[key] = info.name;
+      }
+    }
+  } catch {}
+
   // Populate provider dropdown
   const ps = document.getElementById('provider-select');
   ps.innerHTML = Object.entries(PROVIDER_NAMES).map(([k,v]) =>
@@ -688,6 +705,32 @@ async function init() {
   // Fetch key statuses
   await loadKeyStatuses();
   updateTopbar();
+}
+
+async function refreshModels() {
+  const btn = document.getElementById('refresh-models-btn');
+  if (btn) { btn.disabled = true; btn.textContent = '...'; }
+  try {
+    const resp = await fetch('/models/refresh', { method: 'POST' });
+    if (resp.ok) {
+      const data = await resp.json();
+      const currentProvider = document.getElementById('provider-select').value;
+      const currentModel = document.getElementById('model-select').value;
+      for (const [key, models] of Object.entries(data)) {
+        if (models && models.length) MODELS[key] = models;
+      }
+      onProviderChange();
+      // Try to restore previous model selection
+      const ms = document.getElementById('model-select');
+      if ([...ms.options].some(o => o.value === currentModel)) {
+        ms.value = currentModel;
+      }
+    }
+  } catch (e) {
+    console.error('Model refresh failed:', e);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '\u21BB'; }
+  }
 }
 
 async function loadKeyStatuses() {

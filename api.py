@@ -61,22 +61,6 @@ def health():
     return {"status": "ok"}
 
 
-@app.get("/providers")
-def list_providers():
-    """Return available providers and their default models."""
-    seen = set()
-    result = {}
-    for alias, cls in PROVIDERS.items():
-        if cls in seen:
-            continue
-        seen.add(cls)
-        result[alias] = {
-            "name": cls.name if isinstance(cls.name, str) else alias,
-            "models": list(cls.DEFAULT_MODELS.keys()),
-        }
-    return result
-
-
 @app.post("/chat")
 def chat(req: ChatRequest):
     """Stream a chat response as Server-Sent Events."""
@@ -190,6 +174,58 @@ def get_saved_keys():
             "source": "env" if has_env else ("saved" if has_saved else None),
         }
     result["ollama"] = {"configured": True, "source": "local"}
+    return result
+
+
+# ── Model refresh ─────────────────────────────────────────────────────────────
+
+# In-memory cache of live model lists
+_live_models: dict[str, list[str]] = {}
+
+
+@app.post("/models/refresh")
+def refresh_models():
+    """Fetch live model lists from each configured provider API."""
+    global _live_models
+    config = load_config()
+    result = {}
+    seen_classes = set()
+
+    for alias, cls in PROVIDERS.items():
+        if cls in seen_classes:
+            continue
+        seen_classes.add(cls)
+
+        api_key = get_api_key(alias, config)
+        if not api_key and alias not in ("ollama", "local"):
+            # No key → return static defaults
+            result[alias] = list(cls.DEFAULT_MODELS.keys())
+            continue
+
+        try:
+            live = cls.fetch_available_models(api_key or "ollama")
+            result[alias] = live
+        except Exception:
+            result[alias] = list(cls.DEFAULT_MODELS.keys())
+
+    _live_models = result
+    return result
+
+
+@app.get("/providers")
+def list_providers():
+    """Return available providers and their models (live if refreshed, else defaults)."""
+    seen = set()
+    result = {}
+    for alias, cls in PROVIDERS.items():
+        if cls in seen:
+            continue
+        seen.add(cls)
+        models = _live_models.get(alias, list(cls.DEFAULT_MODELS.keys()))
+        result[alias] = {
+            "name": cls.name if isinstance(cls.name, str) else alias,
+            "models": models,
+        }
     return result
 
 

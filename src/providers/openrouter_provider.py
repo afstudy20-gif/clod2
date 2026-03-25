@@ -1,4 +1,6 @@
 """OpenRouter provider — aggregates many AI models via OpenAI-compatible API."""
+import requests
+
 from .openai_provider import OpenAICompatibleProvider
 
 
@@ -30,6 +32,25 @@ class OpenRouterProvider(OpenAICompatibleProvider):
         "meta-llama/llama-3.3-70b-instruct:free": "meta-llama/llama-3.3-70b-instruct:free",
         "google/gemini-2.5-flash:free": "google/gemini-2.5-flash:free",
     }
+
+    @classmethod
+    def fetch_available_models(cls, api_key: str) -> list[str]:
+        """Fetch available models from OpenRouter (no auth needed)."""
+        try:
+            resp = requests.get(
+                "https://openrouter.ai/api/v1/models",
+                timeout=10,
+            )
+            resp.raise_for_status()
+            data = resp.json().get("data", [])
+            # Return top models sorted by popularity, limit to manageable list
+            models = [m["id"] for m in data if m.get("id")]
+            # Prioritize major providers
+            priority = ["anthropic/", "openai/", "google/", "meta-llama/", "deepseek/", "mistralai/"]
+            top = [m for m in models if any(m.startswith(p) for p in priority)]
+            return sorted(top)[:50] if top else list(cls.DEFAULT_MODELS.keys())
+        except Exception:
+            return list(cls.DEFAULT_MODELS.keys())
 
     def __init__(self, api_key: str, model: str | None = None):
         super().__init__(

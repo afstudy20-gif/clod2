@@ -25,6 +25,17 @@ class CohereProvider(BaseProvider):
         super().__init__(api_key, model or "command-a-03-2025")
         self.client = cohere.Client(api_key=api_key)
 
+    @classmethod
+    def fetch_available_models(cls, api_key: str) -> list[str]:
+        """Fetch available Cohere models via the SDK."""
+        try:
+            client = cohere.Client(api_key=api_key)
+            resp = client.models.list()
+            models = [m.name for m in resp.models if hasattr(m, "name") and "command" in m.name.lower()]
+            return sorted(models) if models else list(cls.DEFAULT_MODELS.keys())
+        except Exception:
+            return list(cls.DEFAULT_MODELS.keys())
+
     def stream_response(
         self,
         messages: list[Message],

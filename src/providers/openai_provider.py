@@ -6,6 +6,7 @@ with a different base_url and api_key.
 import json
 from typing import Iterator
 
+import requests
 from openai import OpenAI
 
 from .base import BaseProvider, Message, ToolCall
@@ -16,12 +17,35 @@ class OpenAICompatibleProvider(BaseProvider):
 
     BASE_URL: str | None = None  # Override in subclass
 
+    # Model ID substrings to exclude when fetching live models
+    _EXCLUDE_PATTERNS: list[str] = ["embed", "tts", "whisper", "dall-e", "moderation", "audio", "realtime", "transcri"]
+
     def __init__(self, api_key: str, model: str | None = None, base_url: str | None = None):
         super().__init__(api_key, model)
         self.client = OpenAI(
             api_key=api_key,
             base_url=base_url or self.BASE_URL,
         )
+
+    @classmethod
+    def fetch_available_models(cls, api_key: str) -> list[str]:
+        """Fetch models from the OpenAI-compatible /v1/models endpoint."""
+        try:
+            base = cls.BASE_URL or "https://api.openai.com/v1"
+            resp = requests.get(
+                f"{base}/models",
+                headers={"Authorization": f"Bearer {api_key}"},
+                timeout=10,
+            )
+            resp.raise_for_status()
+            data = resp.json().get("data", [])
+            ids = sorted(
+                m["id"] for m in data
+                if not any(ex in m["id"].lower() for ex in cls._EXCLUDE_PATTERNS)
+            )
+            return ids if ids else list(cls.DEFAULT_MODELS.keys())
+        except Exception:
+            return list(cls.DEFAULT_MODELS.keys())
 
     def stream_response(
         self,
@@ -173,6 +197,17 @@ class OllamaProvider(OpenAICompatibleProvider):
     def __init__(self, api_key: str = "ollama", model: str | None = None, base_url: str | None = None):
         # Ollama doesn't need a real API key
         super().__init__(api_key or "ollama", model or "llama3.2", base_url or self.BASE_URL)
+
+    @classmethod
+    def fetch_available_models(cls, api_key: str = "ollama") -> list[str]:
+        """Fetch locally available Ollama models via /api/tags."""
+        try:
+            resp = requests.get("http://localhost:11434/api/tags", timeout=5)
+            resp.raise_for_status()
+            models = resp.json().get("models", [])
+            return sorted(m["name"].split(":")[0] for m in models) or list(cls.DEFAULT_MODELS.keys())
+        except Exception:
+            return list(cls.DEFAULT_MODELS.keys())
 
 
 # ── Shared helpers (same as before) ───────────────────────────────────────────

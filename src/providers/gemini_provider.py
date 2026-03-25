@@ -33,6 +33,23 @@ class GeminiProvider(BaseProvider):
                 pass
         genai.configure(api_key=api_key)
 
+    @classmethod
+    def fetch_available_models(cls, api_key: str) -> list[str]:
+        """Fetch available Gemini models via the API."""
+        try:
+            if api_key == "__oauth__":
+                return list(cls.DEFAULT_MODELS.keys())
+            genai.configure(api_key=api_key)
+            models = []
+            for m in genai.list_models():
+                name = m.name.replace("models/", "")
+                # Only include generative models (not embedding/retrieval)
+                if "generateContent" in [ms for ms in (m.supported_generation_methods or [])]:
+                    models.append(name)
+            return sorted(models) if models else list(cls.DEFAULT_MODELS.keys())
+        except Exception:
+            return list(cls.DEFAULT_MODELS.keys())
+
     def stream_response(
         self,
         messages: list[Message],
