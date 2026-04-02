@@ -12,10 +12,9 @@ class AnthropicProvider(BaseProvider):
     DEFAULT_MODELS = {
         "claude-sonnet-4-6": "claude-sonnet-4-6",
         "claude-opus-4-6": "claude-opus-4-6",
-        "claude-haiku-4-5": "claude-haiku-4-5-20251001",
-        "claude-3-5-sonnet": "claude-3-5-sonnet-20241022",
-        "claude-3-5-haiku": "claude-3-5-haiku-20241022",
-        "claude-3-opus": "claude-3-opus-20240229",
+        "claude-haiku-4-5-20251001": "claude-haiku-4-5-20251001",
+        "claude-3-5-sonnet-20241022": "claude-3-5-sonnet-20241022",
+        "claude-3-5-haiku-20241022": "claude-3-5-haiku-20241022",
     }
 
     def __init__(self, api_key: str, model: str | None = None):

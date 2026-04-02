@@ -12,16 +12,15 @@ class GeminiProvider(BaseProvider):
     name = "Google (Gemini)"
 
     DEFAULT_MODELS = {
-        "gemini-3.1-pro": "gemini-3.1-pro-preview",
-        "gemini-3.1-flash-lite": "gemini-3.1-flash-lite-preview",
-        "gemini-3-flash": "gemini-3-flash",
         "gemini-2.5-pro": "gemini-2.5-pro",
         "gemini-2.5-flash": "gemini-2.5-flash",
         "gemini-2.5-flash-lite": "gemini-2.5-flash-lite",
+        "gemini-2.0-flash": "gemini-2.0-flash",
+        "gemini-2.0-flash-lite": "gemini-2.0-flash-lite",
     }
 
     def __init__(self, api_key: str, model: str | None = None):
-        super().__init__(api_key, model or "gemini-3-flash")
+        super().__init__(api_key, model or "gemini-2.5-flash")
         # Store raw response parts for thought_signature preservation
         self._last_raw_parts = []
         # Check for OAuth credentials first

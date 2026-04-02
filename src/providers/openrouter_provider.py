@@ -14,16 +14,15 @@ class OpenRouterProvider(OpenAICompatibleProvider):
         "anthropic/claude-opus-4-6": "anthropic/claude-opus-4-6",
         "anthropic/claude-haiku-4-5": "anthropic/claude-haiku-4-5",
         # OpenAI
-        "openai/gpt-5.4": "openai/gpt-5.4",
-        "openai/gpt-5.4-mini": "openai/gpt-5.4-mini",
+        "openai/gpt-4.1": "openai/gpt-4.1",
+        "openai/gpt-4.1-mini": "openai/gpt-4.1-mini",
         "openai/o3": "openai/o3",
         "openai/o4-mini": "openai/o4-mini",
         # Google
-        "google/gemini-3.1-pro": "google/gemini-3.1-pro-preview",
-        "google/gemini-3-flash": "google/gemini-3-flash",
         "google/gemini-2.5-pro": "google/gemini-2.5-pro",
+        "google/gemini-2.5-flash": "google/gemini-2.5-flash",
         # Meta
-        "meta-llama/llama-4-scout": "meta-llama/llama-4-scout-17b-16e-instruct",
+        "meta-llama/llama-4-scout-17b-16e-instruct": "meta-llama/llama-4-scout-17b-16e-instruct",
         # DeepSeek
         "deepseek/deepseek-chat-v3-0324": "deepseek/deepseek-chat-v3-0324",
         # Mistral

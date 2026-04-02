@@ -137,17 +137,26 @@ def set_key(req: KeyRequest):
 @app.post("/config/key/test")
 def test_key(req: KeyRequest):
     """Test an API key by listing models (fast, no generation needed)."""
+    import concurrent.futures
+
+    cls = PROVIDERS.get(req.provider.lower())
+    if not cls:
+        return {"valid": False, "provider": req.provider, "error": "Unknown provider"}
+
+    def _test():
+        return cls.fetch_available_models(req.key)
+
     try:
-        cls = PROVIDERS.get(req.provider.lower())
-        if not cls:
-            return {"valid": False, "provider": req.provider, "error": "Unknown provider"}
-        # Use fetch_available_models — it's a quick API call, not a generation
-        models = cls.fetch_available_models(req.key)
+        with concurrent.futures.ThreadPoolExecutor() as pool:
+            future = pool.submit(_test)
+            models = future.result(timeout=15)  # Hard 15s timeout
         if models:
-            return {"valid": True, "provider": req.provider}
+            return {"valid": True, "provider": req.provider, "models_found": len(models)}
         return {"valid": False, "provider": req.provider, "error": "No models returned"}
+    except concurrent.futures.TimeoutError:
+        return {"valid": False, "provider": req.provider, "error": "Timeout — key may be valid but API is slow"}
     except Exception as e:
-        return {"valid": False, "provider": req.provider, "error": str(e)}
+        return {"valid": False, "provider": req.provider, "error": str(e)[:200]}
 
 
 @app.get("/config/keys")

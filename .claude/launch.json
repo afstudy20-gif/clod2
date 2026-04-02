@@ -3,8 +3,8 @@
   "configurations": [
     {
       "name": "cclaude-api",
-      "runtimeExecutable": "uvicorn",
-      "runtimeArgs": ["api:app", "--reload", "--port", "8000"],
+      "runtimeExecutable": "/Library/Frameworks/Python.framework/Versions/3.10/bin/python3",
+      "runtimeArgs": ["-m", "uvicorn", "api:app", "--reload", "--port", "8000"],
       "port": 8000
     }
   ]

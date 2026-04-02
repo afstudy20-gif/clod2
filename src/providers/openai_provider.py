@@ -111,19 +111,18 @@ class OpenAIProvider(OpenAICompatibleProvider):
     BASE_URL = None  # uses default openai.com endpoint
 
     DEFAULT_MODELS = {
-        "gpt-5.4": "gpt-5.4",
-        "gpt-5.4-mini": "gpt-5.4-mini",
-        "gpt-5.4-nano": "gpt-5.4-nano",
-        "gpt-5.3-codex": "gpt-5.3-codex",
         "gpt-4.1": "gpt-4.1",
         "gpt-4.1-mini": "gpt-4.1-mini",
+        "gpt-4.1-nano": "gpt-4.1-nano",
+        "gpt-4o": "gpt-4o",
+        "gpt-4o-mini": "gpt-4o-mini",
         "o3": "o3",
         "o4-mini": "o4-mini",
         "o3-mini": "o3-mini",
     }
 
     def __init__(self, api_key: str, model: str | None = None):
-        super().__init__(api_key, model or "gpt-5.4-mini")
+        super().__init__(api_key, model or "gpt-4.1-mini")
 
 
 # ── Groq ──────────────────────────────────────────────────────────────────────
@@ -133,11 +132,9 @@ class GroqProvider(OpenAICompatibleProvider):
     BASE_URL = "https://api.groq.com/openai/v1"
 
     DEFAULT_MODELS = {
-        "openai/gpt-oss-120b": "openai/gpt-oss-120b",
-        "meta-llama/llama-4-scout-17b-16e-instruct": "meta-llama/llama-4-scout-17b-16e-instruct",
-        "qwen/qwen3-32b": "qwen/qwen3-32b",
         "llama-3.3-70b-versatile": "llama-3.3-70b-versatile",
         "llama-3.1-8b-instant": "llama-3.1-8b-instant",
+        "gemma2-9b-it": "gemma2-9b-it",
         "deepseek-r1-distill-llama-70b": "deepseek-r1-distill-llama-70b",
     }
 
@@ -153,8 +150,7 @@ class MistralProvider(OpenAICompatibleProvider):
 
     DEFAULT_MODELS = {
         "mistral-large-latest": "mistral-large-latest",
-        "mistral-medium-3": "mistral-medium-latest",
-        "mistral-small-2603": "mistral-small-2603",
+        "mistral-medium-latest": "mistral-medium-latest",
         "mistral-small-latest": "mistral-small-latest",
         "codestral-latest": "codestral-latest",
     }
