@@ -42,7 +42,7 @@ class ChatRequest(BaseModel):
     system: str = "You are a helpful assistant."
     github_repo: str | None = None   # e.g. "owner/repo" — included in system prompt if set
     github_branch: str = "main"
-    workspace: str = "/workspace"    # local scratch directory inside the container
+    workspace: str | None = None     # local project directory for file tools
     session_id: str | None = None    # optional session ID for persistence
 
 
@@ -82,6 +82,16 @@ def chat(req: ChatRequest):
     from src.core.agent import Agent
     from src.providers.base import Message as InternalMessage, ToolEvent
     from src.tools.registry import get_default_registry
+    from src.tools.implementations import set_project_root
+
+    workspace = Path(req.workspace).expanduser().resolve() if req.workspace else Path.cwd()
+    try:
+        workspace.mkdir(parents=True, exist_ok=True)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Could not access workspace '{req.workspace}': {e}")
+    if not workspace.is_dir():
+        raise HTTPException(status_code=400, detail=f"Workspace is not a directory: {workspace}")
+    set_project_root(str(workspace))
 
     # Load session history if provided
     session_messages: list[InternalMessage] = []
@@ -97,7 +107,7 @@ def chat(req: ChatRequest):
     ]
 
     registry = get_default_registry()
-    agent = Agent(provider, registry)
+    agent = Agent(provider, registry, project_root=str(workspace))
     agent.history = internal_messages[:-1]  # All but last (chat() appends it)
 
     last_msg = req.messages[-1].content if req.messages else ""
@@ -119,6 +129,30 @@ def chat(req: ChatRequest):
         yield "data: [DONE]\n\n"
 
     return StreamingResponse(generate(), media_type="text/event-stream")
+
+
+class PushRequest(BaseModel):
+    workspace: str | None = None
+    remote: str = "origin"
+    branch: str | None = None
+    force: bool = False
+
+
+@app.post("/git/push")
+def push_to_github(req: PushRequest):
+    """Push the selected local workspace to a GitHub remote."""
+    from src.tools.git_tools import git_push
+    from src.tools.implementations import set_project_root
+
+    workspace = Path(req.workspace).expanduser().resolve() if req.workspace else Path.cwd()
+    if not workspace.is_dir():
+        raise HTTPException(status_code=400, detail=f"Workspace is not a directory: {workspace}")
+    if not (workspace / ".git").exists():
+        raise HTTPException(status_code=400, detail=f"Workspace is not a git repository: {workspace}")
+
+    set_project_root(str(workspace))
+    output = git_push(remote=req.remote, branch=req.branch or "", force=req.force)
+    return {"ok": not output.lower().startswith("error:"), "output": output}
 
 
 class KeyRequest(BaseModel):
@@ -172,6 +206,7 @@ def get_saved_keys():
         "groq": "GROQ_API_KEY",
         "mistral": "MISTRAL_API_KEY",
         "deepseek": "DEEPSEEK_API_KEY",
+        "nvidia": "NVIDIA_API_KEY",
         "cohere": "COHERE_API_KEY",
         "openrouter": "OPENROUTER_API_KEY",
     }

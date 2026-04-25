@@ -174,6 +174,27 @@ class DeepSeekProvider(OpenAICompatibleProvider):
         super().__init__(api_key, model or "deepseek-chat")
 
 
+# ── NVIDIA NIM ────────────────────────────────────────────────────────────────
+
+class NvidiaProvider(OpenAICompatibleProvider):
+    name = "NVIDIA NIM"
+    BASE_URL = "https://integrate.api.nvidia.com/v1"
+
+    DEFAULT_MODELS = {
+        "moonshotai/kimi-k2.5": "moonshotai/kimi-k2.5",
+        "deepseek-ai/deepseek-v3.1": "deepseek-ai/deepseek-v3.1",
+        "deepseek-ai/deepseek-r1": "deepseek-ai/deepseek-r1",
+        "nvidia/llama-3.1-nemotron-ultra-253b-v1": "nvidia/llama-3.1-nemotron-ultra-253b-v1",
+        "nvidia/llama-3.3-nemotron-super-49b-v1": "nvidia/llama-3.3-nemotron-super-49b-v1",
+        "meta/llama-3.1-405b-instruct": "meta/llama-3.1-405b-instruct",
+        "meta/llama-3.3-70b-instruct": "meta/llama-3.3-70b-instruct",
+        "qwen/qwen3-coder-480b-a35b-instruct": "qwen/qwen3-coder-480b-a35b-instruct",
+    }
+
+    def __init__(self, api_key: str, model: str | None = None):
+        super().__init__(api_key, model or "moonshotai/kimi-k2.5")
+
+
 # ── Ollama (local) ────────────────────────────────────────────────────────────
 
 class OllamaProvider(OpenAICompatibleProvider):

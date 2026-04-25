@@ -38,6 +38,8 @@ def get_api_key(provider: str, config: dict | None = None) -> str | None:
         "groq": "GROQ_API_KEY",
         "mistral": "MISTRAL_API_KEY",
         "deepseek": "DEEPSEEK_API_KEY",
+        "nvidia": "NVIDIA_API_KEY",
+        "nim": "NVIDIA_API_KEY",
         "cohere": "COHERE_API_KEY",
         "openrouter": "OPENROUTER_API_KEY",
         # Ollama is local — no key needed

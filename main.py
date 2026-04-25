@@ -2,7 +2,7 @@
 """
 CClaude - A multi-provider AI coding assistant (Claude Code alternative)
 
-Supports: Anthropic Claude, OpenAI ChatGPT, Google Gemini, Groq, Mistral, DeepSeek, Ollama, Cohere
+Supports: Anthropic Claude, OpenAI ChatGPT, Google Gemini, Groq, Mistral, DeepSeek, NVIDIA NIM, Ollama, Cohere
 """
 import os
 import sys
@@ -33,7 +33,19 @@ from src.core.session import (
 from src.providers import PROVIDERS, get_provider
 from src.providers.base import ToolEvent
 from src.tools import get_default_registry
-from src.tools.implementations import set_project_root
+from src.tools.git_tools import (
+    git_add,
+    git_branch,
+    git_checkout,
+    git_commit,
+    git_create_pr,
+    git_diff,
+    git_log,
+    git_pull,
+    git_push,
+    git_status,
+)
+from src.tools.implementations import glob_files, grep_search, list_dir, read_file, set_project_root
 
 console = Console()
 output_lock = threading.Lock()
@@ -61,6 +73,8 @@ PROVIDER_COLORS = {
     "groq": "magenta",
     "mistral": "yellow",
     "deepseek": "bright_blue",
+    "nvidia": "bright_green",
+    "nim": "bright_green",
     "ollama": "bright_green",
     "local": "bright_green",
     "cohere": "bright_magenta",
@@ -76,7 +90,7 @@ def print_banner(provider_name: str, model: str, project_root: str | None = None
     )
     if project_root:
         info += f"Project: [bold]{project_name(project_root)}[/bold] ({project_root})\n"
-    info += "Commands: /help  /reset  /model  /provider  /explore  /plan  /session  /exit"
+    info += "Commands: /help  /status  /clear  /model  /provider  /plan  /diff  /push  /exit"
     console.print(Panel(info, title="CClaude - Multi-API Coding Assistant", border_style=color))
 
 
@@ -88,6 +102,7 @@ def get_prompt_style(provider_name: str) -> Style:
         "groq": "#cc00cc",
         "mistral": "#ccaa00",
         "deepseek": "#0055ff",
+        "nvidia": "#76b900", "nim": "#76b900",
         "ollama": "#00cc44", "local": "#00cc44",
         "cohere": "#cc0088",
         "openrouter": "#ccaa00",
@@ -115,26 +130,52 @@ def print_help():
         Panel(
             """[bold]Commands:[/bold]
   /help                    Show this help
-  /reset                   Clear conversation history
+  /reset, /clear, /new      Clear conversation history
+  /status                  Show provider, model, project, mode, and git status
   /model [name]            Switch model or pick interactively
   /provider <name>         Switch provider
   /models                  List available models
   /key <key>               Set API key for current provider
+  /compact                 Trim older conversation history
+  /doctor                  Check local setup
 
 [bold]Modes:[/bold]
   /explore                 Toggle explore mode (read-only, explains code)
   /plan <request>          Plan mode: explore, plan, then execute on approval
   /normal                  Return to normal mode
+  /permissions             Show tool access by mode
 
 [bold]Sessions:[/bold]
   /session save [name]     Save current session
   /session load <name>     Load a saved session
   /session list            List saved sessions
   /session delete <name>   Delete a saved session
+  /save [name]             Alias for /session save
+  /load <name>             Alias for /session load
+  /history                 Alias for /session list
 
 [bold]Project:[/bold]
   /project                 Show current project root
   /project set <path>      Set project root
+  /pwd                     Show current project root
+  /cd <path>               Set project root
+  /ls [path]               List files
+  /read <path>             Read a file
+  /find <glob>             Find files by glob
+  /search <regex>          Search file contents
+  /init                    Create AGENTS.md project instructions
+  /memory [add <text>]     Show or append project instructions
+
+[bold]Git:[/bold]
+  /diff [path]             Show git diff
+  /add [paths]             Stage files
+  /commit <message>        Commit staged changes
+  /pull [remote] [branch]  Pull from remote
+  /push [remote] [branch]  Push current project to GitHub remote
+  /branch [name]           List or create branches
+  /checkout <ref>          Switch branch/ref
+  /log [count]             Show recent commits
+  /pr <title>              Create GitHub PR with gh CLI
 
 [bold]Loop:[/bold]
   /loop <secs> <prompt>    Run a prompt every N seconds
@@ -155,6 +196,7 @@ def print_help():
   groq                →  Groq (fast, free tier)
   mistral             →  Mistral AI
   deepseek            →  DeepSeek (very cheap)
+  nvidia / nim        →  NVIDIA NIM models from build.nvidia.com
   ollama / local      →  Ollama (local, free)
   cohere              →  Cohere Command-R
 """,
@@ -195,6 +237,21 @@ def _summarize_args(args: dict) -> str:
     return ", ".join(parts)
 
 
+def _print_command_output(output: str):
+    style = "red" if output.lower().startswith("error:") else "green"
+    console.print(output, style=style)
+
+
+def _set_project_root(path: str, agent: Agent) -> tuple[str | None, str | None]:
+    root = os.path.abspath(os.path.expanduser(path))
+    if not os.path.isdir(root):
+        console.print(f"[red]Not a directory: {path}[/red]")
+        return None, None
+    set_project_root(root)
+    agent.project_root = root
+    return root, project_name(root)
+
+
 @click.command()
 @click.option("--provider", "-p", default="claude", help="AI provider: claude, openai, gemini")
 @click.option("--model", "-m", default=None, help="Model name (provider-specific)")
@@ -229,7 +286,8 @@ def main(
             f"Set the environment variable or use --key YOUR_API_KEY\n"
             f"  Claude:  export ANTHROPIC_API_KEY=...\n"
             f"  OpenAI:  export OPENAI_API_KEY=...\n"
-            f"  Gemini:  export GOOGLE_API_KEY=..."
+            f"  Gemini:  export GOOGLE_API_KEY=...\n"
+            f"  NVIDIA: export NVIDIA_API_KEY=..."
         )
         sys.exit(1)
 
@@ -311,9 +369,44 @@ def main(
             elif cmd == "/help":
                 print_help()
 
-            elif cmd == "/reset":
+            elif cmd in ("/reset", "/clear", "/new", "/restart"):
                 agent.reset()
                 console.print("[yellow]Conversation history cleared.[/yellow]")
+
+            elif cmd == "/status":
+                console.print(Panel(
+                    f"Provider: [bold]{current_provider_name}[/bold]\n"
+                    f"Model: [bold]{ai_provider.model}[/bold]\n"
+                    f"Mode: [bold]{agent.mode}[/bold]\n"
+                    f"Project: [bold]{proj_root or '(none)'}[/bold]\n"
+                    f"Messages: [bold]{len(agent.history)}[/bold]\n\n"
+                    f"[bold]Git[/bold]\n{git_status()}",
+                    title="Status",
+                    border_style="cyan",
+                ))
+
+            elif cmd == "/compact":
+                from src.core.context import trim_history
+
+                before = len(agent.history)
+                agent.history = trim_history(agent.history)
+                after = len(agent.history)
+                console.print(f"[green]Compacted history: {before} -> {after} messages[/green]")
+
+            elif cmd == "/doctor":
+                checks = [
+                    ("Project root", proj_root or "(none)"),
+                    ("Git status", git_status().splitlines()[0] if proj_root else "No project root"),
+                    ("Provider", current_provider_name),
+                    ("Model", ai_provider.model),
+                    ("API key", "configured" if get_api_key(current_provider_name, load_config()) else "missing"),
+                    ("Python", sys.executable),
+                ]
+                console.print(Panel(
+                    "\n".join(f"{name}: [bold]{value}[/bold]" for name, value in checks),
+                    title="Doctor",
+                    border_style="cyan",
+                ))
 
             elif cmd == "/models":
                 models = ai_provider.list_models()
@@ -441,6 +534,18 @@ def main(
                 agent.mode = "normal"
                 console.print("[green]Switched to normal mode.[/green]")
 
+            elif cmd == "/permissions":
+                readonly = ", ".join(t["name"] for t in registry.get_schemas(readonly_only=True))
+                all_tools = ", ".join(t["name"] for t in registry.get_schemas())
+                console.print(Panel(
+                    "[bold]Normal mode[/bold]\n"
+                    f"{all_tools}\n\n"
+                    "[bold]Explore/plan modes[/bold]\n"
+                    f"{readonly}",
+                    title="Tool Permissions",
+                    border_style="cyan",
+                ))
+
             elif cmd == "/plan":
                 if not arg:
                     console.print("[yellow]Usage: /plan <describe what you want to build>[/yellow]")
@@ -489,6 +594,40 @@ def main(
                         console.print("[yellow]Plan discarded. Back to normal mode.[/yellow]")
 
             # ── Session commands ──────────────────────────────────────────────
+
+            elif cmd == "/save":
+                name = arg or session_id or str(uuid.uuid4())[:8]
+                save_session(name, agent.history, current_provider_name, ai_provider.model, proj_root or "")
+                session_id = name
+                console.print(f"[green]Session saved: {name}[/green]")
+
+            elif cmd == "/load":
+                if not arg:
+                    console.print("[yellow]Usage: /load <name>[/yellow]")
+                else:
+                    try:
+                        messages, meta = load_session(arg)
+                        agent.history = messages
+                        session_id = arg
+                        console.print(
+                            f"[green]Loaded session: {arg} "
+                            f"({len(messages)} messages, provider: {meta.get('provider', '?')})[/green]"
+                        )
+                    except FileNotFoundError:
+                        console.print(f"[red]Session not found: {arg}[/red]")
+
+            elif cmd == "/history":
+                sessions = list_sessions()
+                if not sessions:
+                    console.print("[dim]No saved sessions.[/dim]")
+                else:
+                    console.print("[bold]Saved sessions:[/bold]")
+                    for s in sessions[:20]:
+                        active = " [green]<- active[/green]" if s["id"] == session_id else ""
+                        console.print(
+                            f"  {s['id']}  [{s.get('provider','')}:{s.get('model','')}]  "
+                            f"{s['messages']} msgs  {s.get('updated', '')[:16]}{active}"
+                        )
 
             elif cmd == "/session":
                 sub_parts = arg.split(maxsplit=1)
@@ -553,17 +692,135 @@ def main(
                     else:
                         console.print("[dim]No project detected. Use /project set <path>[/dim]")
                 elif arg.startswith("set "):
-                    new_root = arg[4:].strip()
-                    if os.path.isdir(new_root):
-                        proj_root = os.path.abspath(new_root)
-                        proj = project_name(proj_root)
-                        set_project_root(proj_root)
-                        agent.project_root = proj_root
+                    new_root, new_proj = _set_project_root(arg[4:].strip(), agent)
+                    if new_root:
+                        proj_root, proj = new_root, new_proj
                         console.print(f"[green]Project root set to: {proj_root}[/green]")
-                    else:
-                        console.print(f"[red]Not a directory: {new_root}[/red]")
                 else:
                     console.print("[yellow]Usage: /project or /project set <path>[/yellow]")
+
+            elif cmd == "/pwd":
+                console.print(proj_root or os.getcwd())
+
+            elif cmd == "/cd":
+                if not arg:
+                    console.print("[yellow]Usage: /cd <path>[/yellow]")
+                else:
+                    new_root, new_proj = _set_project_root(arg, agent)
+                    if new_root:
+                        proj_root, proj = new_root, new_proj
+                        console.print(f"[green]Project root set to: {proj_root}[/green]")
+
+            elif cmd == "/ls":
+                console.print(list_dir(arg or "."))
+
+            elif cmd == "/read":
+                if not arg:
+                    console.print("[yellow]Usage: /read <path>[/yellow]")
+                else:
+                    console.print(read_file(arg))
+
+            elif cmd in ("/find", "/glob"):
+                if not arg:
+                    console.print("[yellow]Usage: /find <glob>[/yellow]")
+                else:
+                    console.print(glob_files(arg))
+
+            elif cmd in ("/search", "/grep"):
+                if not arg:
+                    console.print("[yellow]Usage: /search <regex>[/yellow]")
+                else:
+                    console.print(grep_search(arg))
+
+            elif cmd == "/init":
+                root = proj_root or os.getcwd()
+                path = os.path.join(root, "AGENTS.md")
+                if os.path.exists(path):
+                    console.print(f"[yellow]AGENTS.md already exists: {path}[/yellow]")
+                else:
+                    content = (
+                        "# Project Instructions\n\n"
+                        "- Run tests before finishing changes when practical.\n"
+                        "- Prefer the existing code style and local helper APIs.\n"
+                        "- Keep edits focused on the requested task.\n"
+                    )
+                    with open(path, "w", encoding="utf-8") as f:
+                        f.write(content)
+                    console.print(f"[green]Created {path}[/green]")
+
+            elif cmd == "/memory":
+                root = proj_root or os.getcwd()
+                agents_path = os.path.join(root, "AGENTS.md")
+                claude_path = os.path.join(root, "CLAUDE.md")
+                if arg.startswith("add "):
+                    note = arg[4:].strip()
+                    if not note:
+                        console.print("[yellow]Usage: /memory add <text>[/yellow]")
+                    else:
+                        with open(agents_path, "a", encoding="utf-8") as f:
+                            f.write(f"\n- {note}\n")
+                        console.print(f"[green]Added memory to {agents_path}[/green]")
+                else:
+                    found = False
+                    for path in (agents_path, claude_path):
+                        if os.path.exists(path):
+                            found = True
+                            console.print(Panel(read_file(path), title=os.path.basename(path), border_style="cyan"))
+                    if not found:
+                        console.print("[dim]No AGENTS.md or CLAUDE.md found. Use /init to create AGENTS.md.[/dim]")
+
+            # ── Git commands ─────────────────────────────────────────────────
+
+            elif cmd == "/diff":
+                staged = arg == "--staged" or arg.startswith("--staged ")
+                path = arg.replace("--staged", "", 1).strip() if staged else arg
+                console.print(git_diff(staged=staged, path=path))
+
+            elif cmd == "/add":
+                _print_command_output(git_add(arg or "."))
+
+            elif cmd == "/commit":
+                if not arg:
+                    console.print("[yellow]Usage: /commit <message>[/yellow]")
+                else:
+                    _print_command_output(git_commit(arg))
+
+            elif cmd == "/pull":
+                pull_parts = arg.split()
+                remote = pull_parts[0] if len(pull_parts) >= 1 else "origin"
+                branch = pull_parts[1] if len(pull_parts) >= 2 else ""
+                _print_command_output(git_pull(remote=remote, branch=branch))
+
+            elif cmd == "/push":
+                push_parts = arg.split()
+                remote = push_parts[0] if len(push_parts) >= 1 else "origin"
+                branch = push_parts[1] if len(push_parts) >= 2 else ""
+                _print_command_output(git_push(remote=remote, branch=branch))
+
+            elif cmd == "/branch":
+                if not arg:
+                    console.print(git_branch(list_all=True))
+                else:
+                    _print_command_output(git_branch(name=arg))
+
+            elif cmd == "/checkout":
+                if not arg:
+                    console.print("[yellow]Usage: /checkout <ref>[/yellow]")
+                else:
+                    _print_command_output(git_checkout(arg))
+
+            elif cmd == "/log":
+                try:
+                    count = int(arg) if arg else 10
+                except ValueError:
+                    count = 10
+                console.print(git_log(count=count))
+
+            elif cmd == "/pr":
+                if not arg:
+                    console.print("[yellow]Usage: /pr <title>[/yellow]")
+                else:
+                    _print_command_output(git_create_pr(title=arg))
 
             # ── Loop commands ─────────────────────────────────────────────────
 

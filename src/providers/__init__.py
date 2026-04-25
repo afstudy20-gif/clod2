@@ -1,6 +1,6 @@
 from .base import BaseProvider, Message, ToolCall, ToolEvent, ToolResult
 from .anthropic_provider import AnthropicProvider
-from .openai_provider import OpenAIProvider, GroqProvider, MistralProvider, DeepSeekProvider, OllamaProvider
+from .openai_provider import OpenAIProvider, GroqProvider, MistralProvider, DeepSeekProvider, NvidiaProvider, OllamaProvider
 from .gemini_provider import GeminiProvider
 from .cohere_provider import CohereProvider
 from .openrouter_provider import OpenRouterProvider
@@ -27,6 +27,10 @@ PROVIDERS = {
 
     # DeepSeek (very cheap)
     "deepseek": DeepSeekProvider,
+
+    # NVIDIA NIM / build.nvidia.com
+    "nvidia": NvidiaProvider,
+    "nim": NvidiaProvider,
 
     # Ollama (local, free)
     "ollama": OllamaProvider,

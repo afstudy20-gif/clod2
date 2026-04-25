@@ -181,6 +181,38 @@
     gap: 6px;
     font-size: 11px;
   }
+  #token-monitor {
+    min-width: 190px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-size: 10px;
+    color: var(--text3);
+  }
+  #token-monitor-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  #token-count { color: var(--text2); white-space: nowrap; }
+  #token-monitor.warning #token-count { color: var(--accent2); }
+  #token-monitor.danger #token-count { color: var(--red); }
+  #token-bar {
+    height: 4px;
+    width: 100%;
+    background: var(--bg4);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+  #token-bar-fill {
+    width: 0%;
+    height: 100%;
+    background: var(--green);
+    transition: width 0.15s ease, background 0.15s ease;
+  }
+  #token-monitor.warning #token-bar-fill { background: var(--accent2); }
+  #token-monitor.danger #token-bar-fill { background: var(--red); }
   .status-dot {
     width: 6px; height: 6px;
     border-radius: 50%;
@@ -514,6 +546,17 @@
   .key-test-result.error { color: var(--red); }
   .key-test-result.testing { color: var(--accent2); }
 
+  #push-result {
+    color: var(--text2);
+    font-size: 11px;
+    line-height: 1.4;
+    max-height: 90px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+  }
+  #push-result.success { color: var(--green); }
+  #push-result.error { color: var(--red); }
+
   /* Scrollbar */
   ::-webkit-scrollbar { width: 4px; height: 4px; }
   ::-webkit-scrollbar-track { background: transparent; }
@@ -554,9 +597,15 @@
           <button id="refresh-models-btn" onclick="refreshModels()" title="Refresh models from provider API" style="background:#333;border:1px solid #555;color:#f90;padding:4px 8px;border-radius:6px;cursor:pointer;font-size:14px;">&#x21BB;</button>
         </div>
       </div>
+      <div>
+        <div class="field-label">Workspace</div>
+        <input id="workspace-input" type="text" placeholder="/Users/you/project" oninput="onWorkspaceChange()">
+      </div>
       <div style="display:flex;gap:6px;">
         <button class="settings-btn" onclick="openKeyModal()" style="flex:1">API Keys</button>
+        <button class="settings-btn" onclick="pushToGithub()" style="flex:1">Push</button>
       </div>
+      <div id="push-result"></div>
     </div>
   </div>
 
@@ -567,6 +616,13 @@
       <span class="status-dot green" id="tb-status-dot"></span>
       <span class="provider-badge" id="tb-provider">openai</span>
       <span class="model-badge" id="tb-model"></span>
+      <div id="token-monitor" title="Estimated prompt tokens in the active chat, including draft input">
+        <div id="token-monitor-row">
+          <span>Tokens</span>
+          <span id="token-count">0 / 80k</span>
+        </div>
+        <div id="token-bar"><div id="token-bar-fill"></div></div>
+      </div>
       <span class="key-status" id="tb-key-status"></span>
     </div>
 
@@ -630,6 +686,7 @@ let MODELS = {
   groq:       ['llama-3.3-70b-versatile','llama-3.1-8b-instant','gemma2-9b-it','deepseek-r1-distill-llama-70b'],
   mistral:    ['mistral-large-latest','mistral-medium-latest','mistral-small-latest','codestral-latest'],
   deepseek:   ['deepseek-chat','deepseek-reasoner'],
+  nvidia:     ['moonshotai/kimi-k2.5','deepseek-ai/deepseek-v3.1','deepseek-ai/deepseek-r1','nvidia/llama-3.1-nemotron-ultra-253b-v1','nvidia/llama-3.3-nemotron-super-49b-v1','meta/llama-3.1-405b-instruct','meta/llama-3.3-70b-instruct','qwen/qwen3-coder-480b-a35b-instruct'],
   cohere:     ['command-a-03-2025','command-a-reasoning','command-a-vision','command-r-plus','command-r7b-12-2024'],
   ollama:     ['llama3.2','qwen2.5-coder','phi4','deepseek-r1','mistral','codellama','gemma2'],
   openrouter: ['anthropic/claude-sonnet-4-6','anthropic/claude-opus-4-6','openai/gpt-4.1','openai/gpt-4.1-mini','openai/o3','openai/o4-mini','google/gemini-2.5-pro','google/gemini-2.5-flash','meta-llama/llama-4-scout-17b-16e-instruct','deepseek/deepseek-chat-v3-0324','mistralai/mistral-large','meta-llama/llama-3.3-70b-instruct:free','google/gemini-2.5-flash:free'],
@@ -642,6 +699,7 @@ const PROVIDER_NAMES = {
   groq: 'Groq',
   mistral: 'Mistral AI',
   deepseek: 'DeepSeek',
+  nvidia: 'NVIDIA NIM',
   cohere: 'Cohere',
   ollama: 'Ollama (local)',
   openrouter: 'OpenRouter',
@@ -654,6 +712,7 @@ const KEY_ENV_HINTS = {
   groq: 'GROQ_API_KEY',
   mistral: 'MISTRAL_API_KEY',
   deepseek: 'DEEPSEEK_API_KEY',
+  nvidia: 'NVIDIA_API_KEY',
   cohere: 'COHERE_API_KEY',
   openrouter: 'OPENROUTER_API_KEY',
 };
@@ -662,6 +721,10 @@ let chats = JSON.parse(localStorage.getItem('cclaude_chats') || '[]');
 let currentChatId = null;
 let isStreaming = false;
 let keyStatuses = {};
+let streamingAssistantText = '';
+
+const TOKEN_CHAR_RATIO = 4;
+const TOKEN_LIMIT = 80000;
 
 marked.setOptions({ breaks: true, gfm: true });
 
@@ -690,6 +753,7 @@ async function init() {
   // Restore last provider/model
   const savedProvider = localStorage.getItem('cclaude_provider') || 'openai';
   const savedModel = localStorage.getItem('cclaude_model');
+  document.getElementById('workspace-input').value = localStorage.getItem('cclaude_workspace') || '';
   ps.value = savedProvider;
   onProviderChange();
   if (savedModel) {
@@ -705,6 +769,8 @@ async function init() {
   // Fetch key statuses
   await loadKeyStatuses();
   updateTopbar();
+  updateTokenMonitor();
+  setInterval(updateTokenMonitor, 1000);
 }
 
 async function refreshModels() {
@@ -748,6 +814,36 @@ function onProviderChange() {
   updateTopbar();
 }
 
+function onWorkspaceChange() {
+  localStorage.setItem('cclaude_workspace', document.getElementById('workspace-input').value.trim());
+}
+
+async function pushToGithub() {
+  const result = document.getElementById('push-result');
+  result.className = '';
+  result.textContent = 'Pushing...';
+  try {
+    const resp = await fetch('/git/push', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        workspace: document.getElementById('workspace-input').value.trim() || null,
+      }),
+    });
+    const data = await resp.json().catch(() => ({ detail: resp.statusText }));
+    if (!resp.ok) {
+      result.className = 'error';
+      result.textContent = data.detail || 'Push failed';
+      return;
+    }
+    result.className = data.ok ? 'success' : 'error';
+    result.textContent = data.output || 'Push complete';
+  } catch (e) {
+    result.className = 'error';
+    result.textContent = e.message;
+  }
+}
+
 document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('model-select').addEventListener('change', () => {
     const m = document.getElementById('model-select').value;
@@ -776,6 +872,47 @@ function updateTopbar() {
     keyEl.textContent = 'No API key';
     dot.className = 'status-dot red';
   }
+  updateTokenMonitor();
+}
+
+function estimateTokens(text) {
+  const value = String(text || '');
+  return value.length ? Math.max(1, Math.floor(value.length / TOKEN_CHAR_RATIO)) : 0;
+}
+
+function estimateMessageTokens(message) {
+  if (!message) return 0;
+  return estimateTokens(message.content || '');
+}
+
+function getActiveTokenUsage() {
+  const chat = getCurrentChat();
+  const historyTokens = chat ? chat.messages.reduce((sum, msg) => sum + estimateMessageTokens(msg), 0) : 0;
+  const draftTokens = estimateTokens(document.getElementById('user-input')?.value || '');
+  const streamingTokens = estimateTokens(streamingAssistantText);
+  return historyTokens + draftTokens + streamingTokens;
+}
+
+function formatTokens(count) {
+  if (count >= 1000000) return `${(count / 1000000).toFixed(1)}m`;
+  if (count >= 1000) return `${(count / 1000).toFixed(count >= 10000 ? 0 : 1)}k`;
+  return String(count);
+}
+
+function updateTokenMonitor() {
+  const monitor = document.getElementById('token-monitor');
+  const countEl = document.getElementById('token-count');
+  const fill = document.getElementById('token-bar-fill');
+  if (!monitor || !countEl || !fill) return;
+
+  const used = getActiveTokenUsage();
+  const percent = Math.min(100, Math.round((used / TOKEN_LIMIT) * 100));
+  countEl.textContent = `${formatTokens(used)} / ${formatTokens(TOKEN_LIMIT)} (${percent}%)`;
+  fill.style.width = `${percent}%`;
+
+  monitor.classList.toggle('warning', percent >= 70 && percent < 90);
+  monitor.classList.toggle('danger', percent >= 90);
+  monitor.title = `Estimated prompt tokens: ${used.toLocaleString()} of ${TOKEN_LIMIT.toLocaleString()}. Includes active chat, streaming response, and draft input.`;
 }
 
 // Chat management
@@ -785,6 +922,7 @@ function newChat() {
   chats.unshift(chat);
   saveChats();
   loadChat(id);
+  updateTokenMonitor();
 }
 
 function loadChat(id) {
@@ -795,6 +933,7 @@ function loadChat(id) {
   msgs.innerHTML = '';
   if (!chat || !chat.messages.length) {
     showWelcome();
+    updateTokenMonitor();
     return;
   }
   chat.messages.forEach(m => {
@@ -802,6 +941,7 @@ function loadChat(id) {
     else if (m.role === 'assistant') appendAssistantMsg(m.content, false);
   });
   msgs.scrollTop = msgs.scrollHeight;
+  updateTokenMonitor();
 }
 
 function showWelcome() {
@@ -828,6 +968,7 @@ function deleteChat(id, event) {
     else showWelcome();
   }
   renderChatList();
+  updateTokenMonitor();
 }
 
 function getCurrentChat() {
@@ -860,11 +1001,13 @@ function handleKey(e) {
 function autoResize(el) {
   el.style.height = 'auto';
   el.style.height = Math.min(el.scrollHeight, 200) + 'px';
+  updateTokenMonitor();
 }
 
 function sendHint(el) {
   const text = el.querySelector('strong').nextSibling.textContent.trim();
   document.getElementById('user-input').value = text;
+  updateTokenMonitor();
   sendMessage();
 }
 
@@ -886,6 +1029,7 @@ async function sendMessage() {
   if (chat.title === 'New chat') chat.title = text.slice(0, 40);
   saveChats();
   renderChatList();
+  updateTokenMonitor();
 
   appendUserMsg(text);
   await streamAssistant(chat);
@@ -893,6 +1037,8 @@ async function sendMessage() {
 
 async function streamAssistant(chat) {
   isStreaming = true;
+  streamingAssistantText = '';
+  updateTokenMonitor();
   document.getElementById('send-btn').disabled = true;
 
   const provider = document.getElementById('provider-select').value;
@@ -921,6 +1067,7 @@ async function streamAssistant(chat) {
       messages: chat.messages,
       provider,
       model,
+      workspace: document.getElementById('workspace-input').value.trim() || null,
     };
 
     const resp = await fetch('/chat', {
@@ -932,8 +1079,10 @@ async function streamAssistant(chat) {
     if (!resp.ok) {
       const err = await resp.json().catch(() => ({ detail: resp.statusText }));
       body.innerHTML = `<span style="color:var(--red)">Error: ${escHtml(err.detail || 'Request failed')}</span>`;
+      streamingAssistantText = '';
       isStreaming = false;
       document.getElementById('send-btn').disabled = false;
+      updateTokenMonitor();
       return;
     }
 
@@ -955,6 +1104,8 @@ async function streamAssistant(chat) {
           const ev = JSON.parse(raw);
           if (ev.text) {
             fullText += ev.text;
+            streamingAssistantText = fullText;
+            updateTokenMonitor();
             body.innerHTML = renderMarkdown(fullText) + '<span class="cursor"></span>';
             addCopyButtons(body);
             scrollBottom();
@@ -979,7 +1130,9 @@ async function streamAssistant(chat) {
   hljs.highlightAll();
 
   chat.messages.push({ role: 'assistant', content: fullText });
+  streamingAssistantText = '';
   saveChats();
+  updateTokenMonitor();
 
   isStreaming = false;
   document.getElementById('send-btn').disabled = false;

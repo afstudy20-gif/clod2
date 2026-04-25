@@ -81,6 +81,8 @@ def git_push(remote: str = "origin", branch: str = "", force: bool = False) -> s
     if force:
         args.append("--force-with-lease")
     out, code = _git(args)
+    if code != 0:
+        return f"Error: {out}"
     return out
 
 
