@@ -189,6 +189,7 @@ class Agent:
 
         system_prompt = self._get_system_prompt()
         tool_schemas = self._get_tool_schemas()
+        successful_tool_round_seen = False
 
         for _ in range(self.max_tool_rounds):
             tool_calls_seen: list[ToolCall] = []
@@ -227,6 +228,8 @@ class Agent:
 
             if not tool_calls_seen:
                 if self.mode in ("build", "debug"):
+                    if successful_tool_round_seen and assistant_text.strip():
+                        break
                     if self._looks_like_fake_tool_call(assistant_text):
                         retry = (
                             "Your previous response described a hypothetical tool call instead of making one. "
@@ -299,6 +302,8 @@ class Agent:
             self.history.append(
                 Message(role="tool", content="", tool_results=tool_results)
             )
+            if tool_results and not any(tr.is_error for tr in tool_results):
+                successful_tool_round_seen = True
             if self.mode in ("build", "debug") and any(tr.is_error for tr in tool_results):
                 self.history.append(
                     Message(
