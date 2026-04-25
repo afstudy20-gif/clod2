@@ -42,6 +42,8 @@ def get_api_key(provider: str, config: dict | None = None) -> str | None:
         "nim": "NVIDIA_API_KEY",
         "cohere": "COHERE_API_KEY",
         "openrouter": "OPENROUTER_API_KEY",
+        "tavily": "TAVILY_API_KEY",
+        "search": "TAVILY_API_KEY",
         # Ollama is local — no key needed
         "ollama": None,
         "local": None,

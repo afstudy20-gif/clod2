@@ -174,6 +174,30 @@
     font-size: 11px;
   }
   #topbar .model-badge { color: var(--text2); font-size: 11px; }
+  #topbar .topbar-btn {
+    background: var(--bg4);
+    border: 1px solid var(--border2);
+    border-radius: var(--radius);
+    color: var(--text2);
+    font-family: var(--mono);
+    font-size: 10px;
+    padding: 4px 8px;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  #topbar .topbar-btn:hover { color: var(--accent2); border-color: var(--accent); }
+  #topbar-model-update-result {
+    color: var(--text3);
+    font-size: 10px;
+    min-width: 0;
+    max-width: 160px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  #topbar-model-update-result.success { color: var(--green); }
+  #topbar-model-update-result.error { color: var(--red); }
+  #topbar-model-update-result.testing { color: var(--accent2); }
   #topbar .key-status {
     margin-left: auto;
     display: flex;
@@ -295,6 +319,23 @@
   .msg-role.user { color: var(--accent2); }
   .msg-role.assistant { color: var(--green); }
   .msg-role.tool { color: var(--purple); }
+  .msg-actions {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .mini-action-btn {
+    background: var(--bg4);
+    border: 1px solid var(--border2);
+    border-radius: 4px;
+    color: var(--text3);
+    font-family: var(--mono);
+    font-size: 10px;
+    padding: 2px 6px;
+    cursor: pointer;
+  }
+  .mini-action-btn:hover { color: var(--accent2); border-color: var(--accent); }
 
   .msg-body {
     color: var(--text);
@@ -336,9 +377,15 @@
   .msg-body a { color: var(--blue); }
 
   .code-block-wrapper { position: relative; }
-  .copy-btn {
+  .code-actions {
     position: absolute;
     top: 8px; right: 8px;
+    display: flex;
+    gap: 4px;
+    opacity: 0;
+    transition: opacity 0.15s;
+  }
+  .copy-btn, .run-btn {
     background: var(--bg4);
     border: 1px solid var(--border2);
     border-radius: 4px;
@@ -347,11 +394,11 @@
     font-size: 10px;
     padding: 3px 7px;
     cursor: pointer;
-    opacity: 0;
-    transition: opacity 0.15s, color 0.1s, border-color 0.1s;
+    transition: color 0.1s, border-color 0.1s;
   }
-  .code-block-wrapper:hover .copy-btn { opacity: 1; }
-  .copy-btn:hover { color: var(--text); border-color: var(--accent); }
+  .code-block-wrapper:hover .code-actions { opacity: 1; }
+  .copy-btn:hover, .run-btn:hover { color: var(--text); border-color: var(--accent); }
+  .run-btn { color: var(--accent2); }
 
   /* Tool call block */
   .tool-block {
@@ -462,6 +509,61 @@
   }
   #send-btn:hover { background: var(--accent2); }
   #send-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  #attach-btn {
+    background: var(--bg4);
+    border: 1px solid var(--border2);
+    border-radius: var(--radius);
+    color: var(--text2);
+    font-family: var(--mono);
+    font-size: 12px;
+    font-weight: 700;
+    padding: 6px 10px;
+    cursor: pointer;
+  }
+  #attach-btn:hover { color: var(--accent2); border-color: var(--accent); }
+  #attachment-preview {
+    display: none;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  #attachment-preview.open { display: flex; }
+  .attachment-chip {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: var(--bg4);
+    border: 1px solid var(--border2);
+    border-radius: var(--radius);
+    padding: 4px 6px;
+    color: var(--text2);
+    font-size: 11px;
+  }
+  .attachment-chip img {
+    width: 34px;
+    height: 34px;
+    object-fit: cover;
+    border-radius: 4px;
+  }
+  .attachment-chip button {
+    background: none;
+    border: none;
+    color: var(--text3);
+    cursor: pointer;
+  }
+  .message-images {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin: 8px 0;
+  }
+  .message-images img {
+    max-width: 220px;
+    max-height: 160px;
+    border-radius: var(--radius);
+    border: 1px solid var(--border2);
+    object-fit: contain;
+    background: var(--bg4);
+  }
 
   /* Modal overlay */
   .modal-overlay {
@@ -556,20 +658,76 @@
   }
   #push-result.success { color: var(--green); }
   #push-result.error { color: var(--red); }
+  #model-update-result {
+    color: var(--text2);
+    font-size: 11px;
+    line-height: 1.4;
+    min-height: 16px;
+  }
+  #model-update-result.success { color: var(--green); }
+  #model-update-result.error { color: var(--red); }
+  #model-update-result.testing { color: var(--accent2); }
 
   /* Scrollbar */
   ::-webkit-scrollbar { width: 4px; height: 4px; }
   ::-webkit-scrollbar-track { background: transparent; }
   ::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 2px; }
 
+  /* Context Menu */
+  .context-menu {
+    position: fixed;
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+    padding: 4px;
+    z-index: 10000;
+    display: none;
+    min-width: 120px;
+  }
+  .context-menu-item {
+    padding: 8px 12px;
+    font-size: 13px;
+    color: var(--text2);
+    cursor: pointer;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .context-menu-item:hover { background: var(--bg4); color: var(--text); }
+  .context-menu-item.danger:hover { background: rgba(239,68,68,0.1); color: var(--red); }
+
   /* Responsive */
   @media (max-width: 700px) {
     #sidebar { display: none; }
   }
+
+  /* Image Attachments */
+  #attachment-preview { display: none; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+  #attachment-preview.open { display: flex; }
+  .attachment-chip {
+    background: var(--bg4);
+    border: 1px solid var(--border2);
+    border-radius: 6px;
+    padding: 4px 6px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    color: var(--text2);
+  }
+  .attachment-chip img { width: 24px; height: 24px; border-radius: 3px; object-fit: cover; }
+  .attachment-chip button { background: none; border: none; color: var(--text3); cursor: pointer; font-size: 14px; }
+  .attachment-chip button:hover { color: var(--red); }
+
+  .message-images { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+  .message-images img { max-width: 300px; max-height: 300px; border-radius: 6px; border: 1px solid var(--border); }
 </style>
 </head>
 <body>
 <div id="app">
+  <div id="context-menu" class="context-menu"></div>
 
   <!-- Sidebar -->
   <div id="sidebar">
@@ -594,17 +752,22 @@
         <div class="field-label">Model</div>
         <div style="display:flex;gap:4px;align-items:center;">
           <select id="model-select" style="flex:1"></select>
-          <button id="refresh-models-btn" onclick="refreshModels()" title="Refresh models from provider API" style="background:#333;border:1px solid #555;color:#f90;padding:4px 8px;border-radius:6px;cursor:pointer;font-size:14px;">&#x21BB;</button>
+          <button id="refresh-models-btn" onclick="updateModels()" title="Update models from provider API" style="background:#333;border:1px solid #555;color:#f90;padding:4px 8px;border-radius:6px;cursor:pointer;font-size:14px;">&#x21BB;</button>
         </div>
       </div>
       <div>
         <div class="field-label">Workspace</div>
-        <input id="workspace-input" type="text" placeholder="/Users/you/project" oninput="onWorkspaceChange()">
+        <div style="display:flex;gap:4px;">
+          <input id="workspace-input" type="text" placeholder="/Users/you/project" oninput="onWorkspaceChange()" style="flex:1">
+          <button class="settings-btn" onclick="browseWorkspace()" title="Browse local folder" style="padding:0 8px;">📁</button>
+        </div>
       </div>
       <div style="display:flex;gap:6px;">
         <button class="settings-btn" onclick="openKeyModal()" style="flex:1">API Keys</button>
+        <button class="settings-btn" onclick="updateModels()" style="flex:1">Update Models</button>
         <button class="settings-btn" onclick="pushToGithub()" style="flex:1">Push</button>
       </div>
+      <div id="model-update-result"></div>
       <div id="push-result"></div>
     </div>
   </div>
@@ -616,6 +779,8 @@
       <span class="status-dot green" id="tb-status-dot"></span>
       <span class="provider-badge" id="tb-provider">openai</span>
       <span class="model-badge" id="tb-model"></span>
+      <button class="topbar-btn" id="topbar-update-models-btn" onclick="updateModels()">Update Models</button>
+      <span id="topbar-model-update-result"></span>
       <div id="token-monitor" title="Estimated prompt tokens in the active chat, including draft input">
         <div id="token-monitor-row">
           <span>Tokens</span>
@@ -651,13 +816,19 @@
     <!-- Input -->
     <div id="input-area">
       <div id="input-wrapper">
+        <div id="attachment-preview"></div>
         <textarea id="user-input" rows="1" placeholder="Message Cclaude..." onkeydown="handleKey(event)" oninput="autoResize(this)"></textarea>
         <div id="input-footer">
           <div id="input-hints">
             <span><span class="hint-key">Enter</span> send</span>
             <span><span class="hint-key">Shift+Enter</span> newline</span>
           </div>
-          <button id="send-btn" onclick="sendMessage()">Send</button>
+          <div style="display:flex;gap:6px;align-items:center;">
+            <input id="image-input" type="file" accept="image/*" multiple style="display:none" onchange="handleImageFiles(this.files)">
+            <button id="attach-btn" onclick="document.getElementById('image-input').click()" title="Attach image">+</button>
+            <button id="send-btn" onclick="sendMessage()">Send</button>
+            <button id="stop-btn" onclick="stopGeneration()" style="display:none;background:var(--red);color:white;border:none;">Stop</button>
+          </div>
         </div>
       </div>
     </div>
@@ -680,7 +851,7 @@
 <script>
 // Models — fallback defaults, overridden by backend on load
 let MODELS = {
-  openai:     ['gpt-4.1','gpt-4.1-mini','gpt-4.1-nano','gpt-4o','gpt-4o-mini','o3','o4-mini','o3-mini'],
+  openai:     ['gpt-5.5','gpt-5.4','gpt-5.4-mini','gpt-5.4-nano','gpt-5','gpt-5-mini','gpt-5-nano','gpt-4.1','gpt-4.1-mini','gpt-4.1-nano','o3','o4-mini'],
   claude:     ['claude-sonnet-4-6','claude-opus-4-6','claude-haiku-4-5-20251001','claude-3-5-sonnet-20241022'],
   gemini:     ['gemini-2.5-pro','gemini-2.5-flash','gemini-2.5-flash-lite','gemini-2.0-flash','gemini-2.0-flash-lite'],
   groq:       ['llama-3.3-70b-versatile','llama-3.1-8b-instant','gemma2-9b-it','deepseek-r1-distill-llama-70b'],
@@ -688,6 +859,7 @@ let MODELS = {
   deepseek:   ['deepseek-chat','deepseek-reasoner'],
   nvidia:     ['moonshotai/kimi-k2.5','deepseek-ai/deepseek-v3.1','deepseek-ai/deepseek-r1','nvidia/llama-3.1-nemotron-ultra-253b-v1','nvidia/llama-3.3-nemotron-super-49b-v1','meta/llama-3.1-405b-instruct','meta/llama-3.3-70b-instruct','qwen/qwen3-coder-480b-a35b-instruct'],
   cohere:     ['command-a-03-2025','command-a-reasoning','command-a-vision','command-r-plus','command-r7b-12-2024'],
+  tavily:     ['tavily-search','tavily-answer-basic','tavily-answer-advanced'],
   ollama:     ['llama3.2','qwen2.5-coder','phi4','deepseek-r1','mistral','codellama','gemma2'],
   openrouter: ['anthropic/claude-sonnet-4-6','anthropic/claude-opus-4-6','openai/gpt-4.1','openai/gpt-4.1-mini','openai/o3','openai/o4-mini','google/gemini-2.5-pro','google/gemini-2.5-flash','meta-llama/llama-4-scout-17b-16e-instruct','deepseek/deepseek-chat-v3-0324','mistralai/mistral-large','meta-llama/llama-3.3-70b-instruct:free','google/gemini-2.5-flash:free'],
 };
@@ -701,6 +873,7 @@ const PROVIDER_NAMES = {
   deepseek: 'DeepSeek',
   nvidia: 'NVIDIA NIM',
   cohere: 'Cohere',
+  tavily: 'Tavily Search',
   ollama: 'Ollama (local)',
   openrouter: 'OpenRouter',
 };
@@ -715,13 +888,17 @@ const KEY_ENV_HINTS = {
   nvidia: 'NVIDIA_API_KEY',
   cohere: 'COHERE_API_KEY',
   openrouter: 'OPENROUTER_API_KEY',
+  tavily: 'TAVILY_API_KEY',
 };
 
 let chats = JSON.parse(localStorage.getItem('cclaude_chats') || '[]');
 let currentChatId = null;
 let isStreaming = false;
 let keyStatuses = {};
+let providerCapabilities = {};
 let streamingAssistantText = '';
+let pendingImages = [];
+let abortController = null;
 
 const TOKEN_CHAR_RATIO = 4;
 const TOKEN_LIMIT = 80000;
@@ -739,6 +916,10 @@ async function init() {
         if (info.models && info.models.length) {
           MODELS[key] = info.models;
         }
+        providerCapabilities[key] = {
+          supportsTools: info.supports_tools !== false,
+          supportsImages: info.supports_images === true,
+        };
         if (info.name) PROVIDER_NAMES[key] = info.name;
       }
     }
@@ -774,28 +955,80 @@ async function init() {
 }
 
 async function refreshModels() {
+  return updateModels();
+}
+
+async function updateModels(provider = null) {
   const btn = document.getElementById('refresh-models-btn');
+  const topbarBtn = document.getElementById('topbar-update-models-btn');
+  const result = document.getElementById('model-update-result');
+  const topbarResult = document.getElementById('topbar-model-update-result');
   if (btn) { btn.disabled = true; btn.textContent = '...'; }
+  if (topbarBtn) { topbarBtn.disabled = true; topbarBtn.textContent = 'Updating...'; }
+  if (result) {
+    result.className = 'testing';
+    result.textContent = 'Updating models...';
+  }
+  if (topbarResult) {
+    topbarResult.className = 'testing';
+    topbarResult.textContent = 'Updating...';
+  }
   try {
-    const resp = await fetch('/models/refresh', { method: 'POST' });
-    if (resp.ok) {
-      const data = await resp.json();
-      const currentProvider = document.getElementById('provider-select').value;
-      const currentModel = document.getElementById('model-select').value;
-      for (const [key, models] of Object.entries(data)) {
-        if (models && models.length) MODELS[key] = models;
+    const currentProvider = document.getElementById('provider-select').value;
+    const currentModel = document.getElementById('model-select').value;
+    const targetProvider = provider || currentProvider;
+    const resp = await fetch('/models/update', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ provider: targetProvider }),
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) {
+      throw new Error(data.detail || 'Model update failed');
+    }
+
+    const updatedProviders = data.providers || {};
+    for (const [key, info] of Object.entries(updatedProviders)) {
+      const models = Array.isArray(info) ? info : info.models;
+      if (models && models.length) MODELS[key] = models;
+    }
+
+    onProviderChange();
+    const ms = document.getElementById('model-select');
+    if ([...ms.options].some(o => o.value === currentModel)) {
+      ms.value = currentModel;
+    }
+    localStorage.setItem('cclaude_model', ms.value || '');
+    updateTopbar();
+
+    if (result) {
+      const info = updatedProviders[targetProvider] || {};
+      const count = info.count || (MODELS[targetProvider] || []).length;
+      const usedDefaults = info.source === 'defaults';
+      result.className = usedDefaults ? 'testing' : 'success';
+      result.textContent = usedDefaults
+        ? `Using defaults for ${PROVIDER_NAMES[targetProvider] || targetProvider}: ${count} models`
+        : `Updated ${PROVIDER_NAMES[targetProvider] || targetProvider}: ${count} models`;
+      if (topbarResult) {
+        topbarResult.className = usedDefaults ? 'testing' : 'success';
+        topbarResult.textContent = usedDefaults ? 'defaults' : `${count} models`;
       }
-      onProviderChange();
-      // Try to restore previous model selection
-      const ms = document.getElementById('model-select');
-      if ([...ms.options].some(o => o.value === currentModel)) {
-        ms.value = currentModel;
-      }
+      if (topbarBtn) topbarBtn.textContent = usedDefaults ? 'Defaults' : `${count} models`;
     }
   } catch (e) {
     console.error('Model refresh failed:', e);
+    if (result) {
+      result.className = 'error';
+      result.textContent = e.message || 'Model update failed';
+    }
+    if (topbarResult) {
+      topbarResult.className = 'error';
+      topbarResult.textContent = 'Update failed';
+    }
+    if (topbarBtn) topbarBtn.textContent = 'Failed';
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = '\u21BB'; }
+    if (topbarBtn) topbarBtn.disabled = false;
   }
 }
 
@@ -809,8 +1042,12 @@ async function loadKeyStatuses() {
 function onProviderChange() {
   const p = document.getElementById('provider-select').value;
   const ms = document.getElementById('model-select');
+  const topbarBtn = document.getElementById('topbar-update-models-btn');
+  const topbarResult = document.getElementById('topbar-model-update-result');
   ms.innerHTML = (MODELS[p] || []).map(m => `<option value="${m}">${m}</option>`).join('');
   localStorage.setItem('cclaude_provider', p);
+  if (topbarBtn) topbarBtn.textContent = 'Update Models';
+  if (topbarResult) topbarResult.textContent = '';
   updateTopbar();
 }
 
@@ -872,6 +1109,12 @@ function updateTopbar() {
     keyEl.textContent = 'No API key';
     dot.className = 'status-dot red';
   }
+  if (providerCapabilities[p]?.supportsTools === false) {
+    keyEl.textContent += ' · No tools';
+  }
+  if (pendingImages.length && providerCapabilities[p]?.supportsImages !== true) {
+    keyEl.textContent += ' · No vision';
+  }
   updateTokenMonitor();
 }
 
@@ -889,8 +1132,9 @@ function getActiveTokenUsage() {
   const chat = getCurrentChat();
   const historyTokens = chat ? chat.messages.reduce((sum, msg) => sum + estimateMessageTokens(msg), 0) : 0;
   const draftTokens = estimateTokens(document.getElementById('user-input')?.value || '');
+  const imageTokens = pendingImages.length * 1000;
   const streamingTokens = estimateTokens(streamingAssistantText);
-  return historyTokens + draftTokens + streamingTokens;
+  return historyTokens + draftTokens + imageTokens + streamingTokens;
 }
 
 function formatTokens(count) {
@@ -915,6 +1159,21 @@ function updateTokenMonitor() {
   monitor.title = `Estimated prompt tokens: ${used.toLocaleString()} of ${TOKEN_LIMIT.toLocaleString()}. Includes active chat, streaming response, and draft input.`;
 }
 
+async function browseWorkspace() {
+  try {
+    const resp = await fetch('/config/browse', { method: 'POST' });
+    const data = await resp.json();
+    if (data.path) {
+      document.getElementById('workspace-input').value = data.path;
+      onWorkspaceChange();
+    } else if (data.error && data.error !== 'Cancelled') {
+      alert('Error browsing folder: ' + data.error);
+    }
+  } catch (e) {
+    alert('Network error browsing folder: ' + e.message);
+  }
+}
+
 // Chat management
 function newChat() {
   const id = Date.now().toString();
@@ -937,8 +1196,8 @@ function loadChat(id) {
     return;
   }
   chat.messages.forEach(m => {
-    if (m.role === 'user') appendUserMsg(m.content, false);
-    else if (m.role === 'assistant') appendAssistantMsg(m.content, false);
+    if (m.role === 'user') appendUserMsg(getMessageText(m), false, getMessageImages(m));
+    else if (m.role === 'assistant') appendAssistantMsg(getMessageText(m), false);
   });
   msgs.scrollTop = msgs.scrollHeight;
   updateTokenMonitor();
@@ -975,6 +1234,76 @@ function getCurrentChat() {
   return chats.find(c => c.id === currentChatId);
 }
 
+function buildMessageContent(text, images) {
+  if (!images.length) return text;
+  const parts = [];
+  if (text) parts.push({ type: 'text', text });
+  for (const image of images) {
+    parts.push({ type: 'image_url', url: image.dataUrl, name: image.name });
+  }
+  return parts;
+}
+
+function getMessageText(message) {
+  const content = message?.content;
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return '';
+  return content.filter(p => p.type === 'text').map(p => p.text || '').join('\n');
+}
+
+function getMessageImages(message) {
+  const content = message?.content;
+  if (!Array.isArray(content)) return [];
+  return content
+    .filter(p => p.type === 'image_url' && p.url)
+    .map(p => ({ dataUrl: p.url, name: p.name || 'image' }));
+}
+
+async function handleImageFiles(files) {
+  const selected = Array.from(files || []).filter(file => file.type.startsWith('image/'));
+  for (const file of selected.slice(0, 4)) {
+    const dataUrl = await readFileAsDataUrl(file);
+    pendingImages.push({ name: file.name, dataUrl });
+  }
+  document.getElementById('image-input').value = '';
+  renderAttachmentPreview();
+  updateTopbar();
+  updateTokenMonitor();
+}
+
+function readFileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+function renderAttachmentPreview() {
+  const el = document.getElementById('attachment-preview');
+  if (!pendingImages.length) {
+    el.className = '';
+    el.innerHTML = '';
+    return;
+  }
+  el.className = 'open';
+  el.innerHTML = pendingImages.map((image, i) => `
+    <div class="attachment-chip">
+      <img src="${image.dataUrl}" alt="">
+      <span>${escHtml(image.name || 'image')}</span>
+      <button onclick="removePendingImage(${i})">&times;</button>
+    </div>
+  `).join('');
+}
+
+function removePendingImage(index) {
+  pendingImages.splice(index, 1);
+  renderAttachmentPreview();
+  updateTopbar();
+  updateTokenMonitor();
+}
+
 function saveChats() {
   const trimmed = chats.slice(0, 50).map(c => ({
     ...c,
@@ -986,11 +1315,36 @@ function saveChats() {
 function renderChatList() {
   const list = document.getElementById('chat-list');
   list.innerHTML = chats.map(c => `
-    <div class="chat-item ${c.id === currentChatId ? 'active' : ''}" onclick="loadChat('${c.id}')">
+    <div class="chat-item ${c.id === currentChatId ? 'active' : ''}" 
+         onclick="loadChat('${c.id}')" 
+         oncontextmenu="showChatContextMenu(event, '${c.id}')">
       <span style="overflow:hidden;text-overflow:ellipsis">${escHtml(c.title)}</span>
       <button class="delete-chat" onclick="deleteChat('${c.id}', event)" title="Delete">&times;</button>
     </div>
   `).join('');
+}
+
+function showChatContextMenu(e, id) {
+  e.preventDefault();
+  const menu = document.getElementById('context-menu');
+  menu.innerHTML = `
+    <div class="context-menu-item danger" onclick="deleteChat('${id}', event); closeContextMenu()">
+      <span>&times;</span> Delete Chat
+    </div>
+  `;
+  menu.style.display = 'block';
+  menu.style.left = e.pageX + 'px';
+  menu.style.top = e.pageY + 'px';
+  
+  const close = () => {
+    menu.style.display = 'none';
+    document.removeEventListener('click', close);
+  };
+  setTimeout(() => document.addEventListener('click', close), 10);
+}
+
+function closeContextMenu() {
+  document.getElementById('context-menu').style.display = 'none';
 }
 
 // Sending
@@ -1015,7 +1369,7 @@ async function sendMessage() {
   if (isStreaming) return;
   const input = document.getElementById('user-input');
   const text = input.value.trim();
-  if (!text) return;
+  if (!text && !pendingImages.length) return;
 
   if (!currentChatId) newChat();
   const welcomeEl = document.getElementById('welcome');
@@ -1025,13 +1379,18 @@ async function sendMessage() {
   input.style.height = 'auto';
 
   const chat = getCurrentChat();
-  chat.messages.push({ role: 'user', content: text });
+  const images = pendingImages.slice();
+  const content = buildMessageContent(text, images);
+  pendingImages = [];
+  renderAttachmentPreview();
+  updateTopbar();
+  chat.messages.push({ role: 'user', content });
   if (chat.title === 'New chat') chat.title = text.slice(0, 40);
   saveChats();
   renderChatList();
   updateTokenMonitor();
 
-  appendUserMsg(text);
+  appendUserMsg(text, true, images);
   await streamAssistant(chat);
 }
 
@@ -1040,6 +1399,9 @@ async function streamAssistant(chat) {
   streamingAssistantText = '';
   updateTokenMonitor();
   document.getElementById('send-btn').disabled = true;
+  document.getElementById('stop-btn').style.display = 'block';
+
+  abortController = new AbortController();
 
   const provider = document.getElementById('provider-select').value;
   const model = document.getElementById('model-select').value;
@@ -1051,6 +1413,14 @@ async function streamAssistant(chat) {
   const header = document.createElement('div');
   header.className = 'msg-header';
   header.innerHTML = `<span class="msg-role assistant">assistant</span><span style="color:var(--text3);font-size:10px">${escHtml(PROVIDER_NAMES[provider] || provider)} / ${escHtml(model)}</span>`;
+  const actions = document.createElement('span');
+  actions.className = 'msg-actions';
+  const copyBtn = document.createElement('button');
+  copyBtn.className = 'mini-action-btn';
+  copyBtn.textContent = 'copy';
+  copyBtn.onclick = () => copyText(fullText, copyBtn);
+  actions.appendChild(copyBtn);
+  header.appendChild(actions);
   const body = document.createElement('div');
   body.className = 'msg-body';
   body.innerHTML = '<span class="cursor"></span>';
@@ -1074,6 +1444,7 @@ async function streamAssistant(chat) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
+      signal: abortController.signal,
     });
 
     if (!resp.ok) {
@@ -1136,19 +1507,34 @@ async function streamAssistant(chat) {
 
   isStreaming = false;
   document.getElementById('send-btn').disabled = false;
+  document.getElementById('stop-btn').style.display = 'none';
   scrollBottom();
 }
 
+function stopGeneration() {
+  if (abortController) {
+    abortController.abort();
+    isStreaming = false;
+    document.getElementById('send-btn').disabled = false;
+    document.getElementById('stop-btn').style.display = 'none';
+  }
+}
+
 // Rendering
-function appendUserMsg(text, scroll = true) {
+function appendUserMsg(text, scroll = true, images = []) {
   const msgs = document.getElementById('messages');
   const row = document.createElement('div');
   row.className = 'msg-row';
-  row.innerHTML = `
-    <div class="msg">
-      <div class="msg-header"><span class="msg-role user">you</span></div>
-      <div class="msg-body">${escHtml(text).replace(/\n/g, '<br>')}</div>
-    </div>`;
+  const msg = document.createElement('div');
+  msg.className = 'msg';
+  const header = createMessageHeader('user', '', text);
+  const body = document.createElement('div');
+  body.className = 'msg-body';
+  body.innerHTML = escHtml(text || '').replace(/\n/g, '<br>');
+  if (images.length) body.appendChild(renderMessageImages(images));
+  msg.appendChild(header);
+  msg.appendChild(body);
+  row.appendChild(msg);
   msgs.appendChild(row);
   if (scroll) scrollBottom();
 }
@@ -1157,14 +1543,61 @@ function appendAssistantMsg(text, scroll = true) {
   const msgs = document.getElementById('messages');
   const row = document.createElement('div');
   row.className = 'msg-row';
+  const msg = document.createElement('div');
+  msg.className = 'msg';
+  msg.appendChild(createMessageHeader('assistant', '', text));
   const body = document.createElement('div');
   body.className = 'msg-body';
   body.innerHTML = renderMarkdown(text);
   addCopyButtons(body);
-  row.innerHTML = `<div class="msg"><div class="msg-header"><span class="msg-role assistant">assistant</span></div></div>`;
-  row.firstChild.appendChild(body);
+  msg.appendChild(body);
+  row.appendChild(msg);
   msgs.appendChild(row);
   if (scroll) scrollBottom();
+}
+
+function renderMessageImages(images) {
+  const wrap = document.createElement('div');
+  wrap.className = 'message-images';
+  for (const image of images) {
+    const img = document.createElement('img');
+    img.src = image.dataUrl;
+    img.alt = image.name || 'attached image';
+    wrap.appendChild(img);
+  }
+  return wrap;
+}
+
+function createMessageHeader(role, meta, text) {
+  const header = document.createElement('div');
+  header.className = 'msg-header';
+  const roleEl = document.createElement('span');
+  roleEl.className = `msg-role ${role}`;
+  roleEl.textContent = role === 'user' ? 'you' : role;
+  header.appendChild(roleEl);
+  if (meta) {
+    const metaEl = document.createElement('span');
+    metaEl.style.color = 'var(--text3)';
+    metaEl.style.fontSize = '10px';
+    metaEl.textContent = meta;
+    header.appendChild(metaEl);
+  }
+  const actions = document.createElement('span');
+  actions.className = 'msg-actions';
+  const copyBtn = document.createElement('button');
+  copyBtn.className = 'mini-action-btn';
+  copyBtn.textContent = 'copy';
+  copyBtn.onclick = () => copyText(text, copyBtn);
+  actions.appendChild(copyBtn);
+  if (looksRunnableCommand(text)) {
+    const runBtn = document.createElement('button');
+    runBtn.className = 'mini-action-btn';
+    runBtn.textContent = 'run';
+    runBtn.onclick = () => runTerminalCommand(text, runBtn);
+    actions.appendChild(runBtn);
+  }
+  header.appendChild(actions);
+  return header;
 }
 
 function appendToolBlock(container, tool) {
@@ -1202,16 +1635,103 @@ function addCopyButtons(container) {
     wrapper.className = 'code-block-wrapper';
     pre.parentNode.insertBefore(wrapper, pre);
     wrapper.appendChild(pre);
+    const actions = document.createElement('div');
+    actions.className = 'code-actions';
     const btn = document.createElement('button');
     btn.className = 'copy-btn';
     btn.textContent = 'copy';
-    btn.onclick = () => {
-      navigator.clipboard.writeText(pre.textContent);
-      btn.textContent = 'copied!';
-      setTimeout(() => btn.textContent = 'copy', 1500);
-    };
-    wrapper.appendChild(btn);
+    btn.onclick = () => copyText(pre.textContent, btn);
+    const runBtn = document.createElement('button');
+    runBtn.className = 'run-btn';
+    runBtn.textContent = 'run';
+    runBtn.onclick = () => runTerminalCommand(pre.textContent, runBtn);
+    actions.appendChild(btn);
+    actions.appendChild(runBtn);
+    wrapper.appendChild(actions);
   });
+}
+
+async function copyText(text, button) {
+  try {
+    await navigator.clipboard.writeText(text || '');
+    if (button) {
+      const original = button.textContent;
+      button.textContent = 'copied';
+      setTimeout(() => button.textContent = original, 1200);
+    }
+  } catch (e) {
+    if (button) button.textContent = 'failed';
+  }
+}
+
+async function runTerminalCommand(rawCommand, button) {
+  const command = cleanRunnableCommand(rawCommand);
+  if (!command) return;
+  const workspace = document.getElementById('workspace-input').value.trim() || '(server cwd)';
+  if (!confirm(`Run this command in ${workspace}?\n\n${command}`)) return;
+
+  const original = button ? button.textContent : '';
+  if (button) {
+    button.disabled = true;
+    button.textContent = 'running';
+  }
+  try {
+    const resp = await fetch('/terminal/run', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        command,
+        workspace: document.getElementById('workspace-input').value.trim() || null,
+        timeout: 120,
+      }),
+    });
+    const data = await resp.json().catch(() => ({ output: 'Failed to parse terminal response' }));
+    appendTerminalResult(command, data);
+  } catch (e) {
+    appendTerminalResult(command, { ok: false, exit_code: null, output: e.message });
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.textContent = original || 'run';
+    }
+  }
+}
+
+function cleanRunnableCommand(text) {
+  return String(text || '')
+    .split('\n')
+    .map(line => line.replace(/^\s*\$\s?/, ''))
+    .join('\n')
+    .trim();
+}
+
+function looksRunnableCommand(text) {
+  const command = cleanRunnableCommand(text);
+  if (!command || command.includes('```') || command.length > 500) return false;
+  const lines = command.split('\n').filter(Boolean);
+  if (lines.length > 4) return false;
+  return /^(npm|pnpm|yarn|bun|python3?|pip|pytest|uv|ruff|mypy|git|gh|docker|docker-compose|make|cargo|go|node|deno|npx|curl|ls|cat|rg|grep|sed|cd|mkdir|touch|chmod|bash|sh|zsh)\b/.test(lines[0]);
+}
+
+function appendTerminalResult(command, result) {
+  const msgs = document.getElementById('messages');
+  const row = document.createElement('div');
+  row.className = 'msg-row';
+  const status = result.ok ? 'ok' : `exit ${result.exit_code ?? 'error'}`;
+  const output = result.output || '(no output)';
+  row.innerHTML = `
+    <div class="tool-block">
+      <div class="tool-header">
+        <span class="tool-icon">$</span>
+        <span class="tool-name">terminal</span>
+        <span class="tool-args-summary">${escHtml(status)} · ${escHtml(command.split('\n')[0]).slice(0, 120)}</span>
+      </div>
+      <div class="tool-body open">
+        <div class="tool-result">${escHtml(output)}</div>
+      </div>
+    </div>`;
+  msgs.appendChild(row);
+  scrollBottom();
 }
 
 function scrollBottom() {
@@ -1236,7 +1756,7 @@ function closeKeyModal() {
 
 function renderKeyModal() {
   const list = document.getElementById('key-list');
-  const providers = ['openai','claude','gemini','groq','mistral','deepseek','cohere','openrouter'];
+  const providers = Object.keys(KEY_ENV_HINTS);
   list.innerHTML = providers.map(p => {
     const ks = keyStatuses[p] || {};
     const statusClass = ks.configured ? 'configured' : 'missing';
@@ -1315,6 +1835,7 @@ async function saveKey(provider) {
       badge.textContent = 'Saved';
       keyStatuses[provider] = { configured: true, source: 'saved' };
       input.value = '';
+      await updateModels(provider);
     }
   } catch (e) {
     result.className = 'key-test-result error';

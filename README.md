@@ -1,10 +1,10 @@
 # CClaude — Multi-Provider AI Coding Assistant
 
-A terminal-based AI coding assistant (Claude Code alternative) that works with **Anthropic Claude**, **OpenAI ChatGPT**, **Google Gemini**, **Groq**, **Mistral**, **DeepSeek**, **NVIDIA NIM**, **Cohere**, and **Ollama** — using your own API keys.
+A terminal-based AI coding assistant (Claude Code alternative) that works with **Anthropic Claude**, **OpenAI ChatGPT**, **Google Gemini**, **Groq**, **Mistral**, **DeepSeek**, **NVIDIA NIM**, **Tavily Search**, **Cohere**, and **Ollama** — using your own API keys.
 
 ## Features
 
-- **Multi-provider**: Switch between 9 providers in one session
+- **Multi-provider**: Switch between 10 providers in one session
 - **Agentic tool use**: reads/writes/edits files, runs bash commands, searches code
 - **Session resume**: Save and load conversation history across restarts
 - **Project-aware**: Auto-detects project root, resolves paths relative to it
@@ -38,6 +38,7 @@ export ANTHROPIC_API_KEY=sk-ant-...
 export OPENAI_API_KEY=sk-...
 export GOOGLE_API_KEY=AIza...
 export NVIDIA_API_KEY=nvapi-...
+export TAVILY_API_KEY=tvly-...
 ```
 
 ### 3. Run
@@ -108,6 +109,7 @@ python main.py --project /path/to/project
 | `/search <regex>` | Search file contents |
 | `/init` | Create an `AGENTS.md` project instructions file |
 | `/memory [add <text>]` | Show or append project instructions |
+| `/skills` | List loaded markdown skills from `skills/*/SKILL.md` |
 
 ### Git
 | Command | Description |
@@ -142,6 +144,16 @@ python main.py --project /path/to/project
 
 In **explore** and **plan** modes, only read-only tools (read_file, glob, grep, list_dir) are available.
 
+## Markdown Skills
+
+CClaude loads project markdown instructions into the agent system prompt from:
+
+- `AGENTS.md`
+- `CLAUDE.md`
+- `skills/*/SKILL.md`
+
+This repository includes `skills/karpathy-guidelines/SKILL.md`, adapted from `afstudy20-gif/karpathy-skills`, to encourage simpler, more surgical, and more verifiable coding changes.
+
 ## Providers & Models
 
 | Provider | Alias(es) | Key env var | Cost |
@@ -153,6 +165,7 @@ In **explore** and **plan** modes, only read-only tools (read_file, glob, grep, 
 | **Mistral AI** | `mistral` | `MISTRAL_API_KEY` | $ |
 | **DeepSeek** | `deepseek` | `DEEPSEEK_API_KEY` | very cheap |
 | **NVIDIA NIM** | `nvidia`, `nim` | `NVIDIA_API_KEY` | build.nvidia.com |
+| **Tavily Search** | `tavily`, `search` | `TAVILY_API_KEY` | search API |
 | **Cohere** | `cohere` | `COHERE_API_KEY` | $ |
 | **Ollama** | `ollama`, `local` | *(none — local)* | free |
 

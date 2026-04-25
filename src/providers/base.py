@@ -39,6 +39,8 @@ class BaseProvider(ABC):
     """Abstract base for all AI providers."""
 
     DEFAULT_MODELS: dict[str, str] = {}
+    SUPPORTS_TOOLS: bool = True
+    SUPPORTS_IMAGES: bool = False
 
     def __init__(self, api_key: str, model: str | None = None):
         self.api_key = api_key

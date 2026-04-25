@@ -4,6 +4,7 @@ from .openai_provider import OpenAIProvider, GroqProvider, MistralProvider, Deep
 from .gemini_provider import GeminiProvider
 from .cohere_provider import CohereProvider
 from .openrouter_provider import OpenRouterProvider
+from .tavily_provider import TavilyProvider
 
 PROVIDERS = {
     # Anthropic Claude
@@ -41,6 +42,10 @@ PROVIDERS = {
 
     # OpenRouter (aggregator — many providers via one API)
     "openrouter": OpenRouterProvider,
+
+    # Tavily (AI search API)
+    "tavily": TavilyProvider,
+    "search": TavilyProvider,
 }
 
 

@@ -1,4 +1,5 @@
 import json
+import re
 from typing import Iterator
 
 import anthropic
@@ -8,6 +9,7 @@ from .base import BaseProvider, Message, ToolCall
 
 class AnthropicProvider(BaseProvider):
     name = "Anthropic (Claude)"
+    SUPPORTS_IMAGES = True
 
     DEFAULT_MODELS = {
         "claude-sonnet-4-6": "claude-sonnet-4-6",
@@ -107,8 +109,38 @@ def _format_messages(messages: list[Message]) -> list[dict]:
                 })
             result.append({"role": "assistant", "content": content})
         else:
-            result.append({"role": msg.role, "content": str(msg.content)})
+            result.append({"role": msg.role, "content": _format_anthropic_content(msg.content)})
     return result
+
+
+def _format_anthropic_content(content):
+    if not isinstance(content, list):
+        return str(content)
+    parts = []
+    for item in content:
+        if not isinstance(item, dict):
+            continue
+        if item.get("type") == "text":
+            parts.append({"type": "text", "text": item.get("text", "")})
+        elif item.get("type") == "image_url":
+            media_type, data = _parse_data_url(item.get("url", ""))
+            if media_type and data:
+                parts.append({
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": media_type,
+                        "data": data,
+                    },
+                })
+    return parts or ""
+
+
+def _parse_data_url(url: str) -> tuple[str | None, str | None]:
+    match = re.match(r"data:([^;]+);base64,(.*)", url or "", flags=re.DOTALL)
+    if not match:
+        return None, None
+    return match.group(1), match.group(2)
 
 
 def _convert_tools(tools: list[dict]) -> list[dict]:

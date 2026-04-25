@@ -2,7 +2,7 @@
 """
 CClaude - A multi-provider AI coding assistant (Claude Code alternative)
 
-Supports: Anthropic Claude, OpenAI ChatGPT, Google Gemini, Groq, Mistral, DeepSeek, NVIDIA NIM, Ollama, Cohere
+Supports: Anthropic Claude, OpenAI ChatGPT, Google Gemini, Groq, Mistral, DeepSeek, NVIDIA NIM, Tavily, Ollama, Cohere
 """
 import os
 import sys
@@ -23,6 +23,7 @@ from src.core.auth import OAUTH_PROVIDERS, login_openrouter, login_google, get_g
 from src.core.config import get_api_key, get_last_model, load_config, set_api_key, set_last_model
 from src.core.loop import LoopRunner
 from src.core.project import detect_project_root, project_name
+from src.core.skills import list_project_instruction_files
 from src.core.session import (
     delete_session,
     get_last_session_id,
@@ -79,6 +80,8 @@ PROVIDER_COLORS = {
     "local": "bright_green",
     "cohere": "bright_magenta",
     "openrouter": "bright_yellow",
+    "tavily": "bright_cyan",
+    "search": "bright_cyan",
 }
 
 
@@ -106,6 +109,7 @@ def get_prompt_style(provider_name: str) -> Style:
         "ollama": "#00cc44", "local": "#00cc44",
         "cohere": "#cc0088",
         "openrouter": "#ccaa00",
+        "tavily": "#00c7b7", "search": "#00c7b7",
     }
     color = color_map.get(provider_name.lower(), "#ffffff")
     return Style.from_dict({"prompt": color})
@@ -165,6 +169,7 @@ def print_help():
   /search <regex>          Search file contents
   /init                    Create AGENTS.md project instructions
   /memory [add <text>]     Show or append project instructions
+  /skills                  List loaded markdown skills
 
 [bold]Git:[/bold]
   /diff [path]             Show git diff
@@ -197,6 +202,7 @@ def print_help():
   mistral             →  Mistral AI
   deepseek            →  DeepSeek (very cheap)
   nvidia / nim        →  NVIDIA NIM models from build.nvidia.com
+  tavily / search     →  Tavily AI search modes
   ollama / local      →  Ollama (local, free)
   cohere              →  Cohere Command-R
 """,
@@ -287,7 +293,8 @@ def main(
             f"  Claude:  export ANTHROPIC_API_KEY=...\n"
             f"  OpenAI:  export OPENAI_API_KEY=...\n"
             f"  Gemini:  export GOOGLE_API_KEY=...\n"
-            f"  NVIDIA: export NVIDIA_API_KEY=..."
+            f"  NVIDIA: export NVIDIA_API_KEY=...\n"
+            f"  Tavily: export TAVILY_API_KEY=..."
         )
         sys.exit(1)
 
@@ -762,12 +769,23 @@ def main(
                         console.print(f"[green]Added memory to {agents_path}[/green]")
                 else:
                     found = False
-                    for path in (agents_path, claude_path):
-                        if os.path.exists(path):
+                    for rel in list_project_instruction_files(root):
+                        path = os.path.join(root, rel)
+                        if os.path.isfile(path):
                             found = True
-                            console.print(Panel(read_file(path), title=os.path.basename(path), border_style="cyan"))
+                            console.print(Panel(read_file(path), title=rel, border_style="cyan"))
                     if not found:
-                        console.print("[dim]No AGENTS.md or CLAUDE.md found. Use /init to create AGENTS.md.[/dim]")
+                        console.print("[dim]No AGENTS.md, CLAUDE.md, or skills/*/SKILL.md found. Use /init to create AGENTS.md.[/dim]")
+
+            elif cmd == "/skills":
+                root = proj_root or os.getcwd()
+                skill_files = [p for p in list_project_instruction_files(root) if p.startswith("skills/")]
+                if not skill_files:
+                    console.print("[dim]No markdown skills found under skills/*/SKILL.md[/dim]")
+                else:
+                    console.print("[bold]Loaded markdown skills:[/bold]")
+                    for path in skill_files:
+                        console.print(f"  {path}")
 
             # ── Git commands ─────────────────────────────────────────────────
 
