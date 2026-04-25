@@ -8,7 +8,7 @@ import re
 from typing import Iterator
 
 import requests
-from openai import OpenAI
+from openai import APIStatusError, NotFoundError, OpenAI, RateLimitError
 
 from .base import BaseProvider, Message, ToolCall
 
@@ -27,6 +27,7 @@ class OpenAICompatibleProvider(BaseProvider):
         self.client = OpenAI(
             api_key=api_key,
             base_url=base_url or self.BASE_URL,
+            timeout=180.0,  # Increased to 3 minutes for slower NIM models
         )
 
     @classmethod
@@ -52,59 +53,120 @@ class OpenAICompatibleProvider(BaseProvider):
         tools: list[dict],
         system: str,
     ) -> Iterator[str | ToolCall]:
-        formatted = _format_messages(messages, system)
-        openai_tools = _convert_tools(tools) if getattr(self, "SUPPORTS_TOOLS", True) else []
+        formatted = self._format_messages(messages, system)
+        openai_tools = self._convert_tools(tools) if getattr(self, "SUPPORTS_TOOLS", True) else []
         self._suppress_content = False
 
         kwargs: dict = {
             "model": self.model,
             "messages": formatted,
             "stream": True,
+            "temperature": 0.0,  # Use 0 for more stable/predictable code generation
+            "max_tokens": getattr(self, "MAX_TOKENS", 4096),
         }
         if openai_tools:
             kwargs["tools"] = openai_tools
             kwargs["tool_choice"] = "auto"
 
-        stream = self.client.chat.completions.create(**kwargs)
+        try:
+            stream = self.client.chat.completions.create(**kwargs)
+        except RateLimitError as exc:
+            raise RuntimeError(self._format_rate_limit_error(exc)) from exc
+        except APIStatusError as exc:
+            if exc.status_code == 429:
+                raise RuntimeError(self._format_rate_limit_error(exc)) from exc
+            if exc.status_code == 404:
+                raise RuntimeError(self._format_not_found_error(exc)) from exc
+            raise
         tool_calls_map: dict[int, dict] = {}
 
-        for chunk in stream:
-            delta = chunk.choices[0].delta if chunk.choices else None
-            if delta is None:
-                continue
+        try:
+            for chunk in stream:
+                delta = chunk.choices[0].delta if chunk.choices else None
+                if delta is None:
+                    continue
 
-            if delta.content:
-                yield self._clean_content_delta(delta.content)
+                if delta.content:
+                    yield self._clean_content_delta(delta.content)
 
-            if delta.tool_calls:
-                for tc_delta in delta.tool_calls:
-                    idx = tc_delta.index
-                    if idx not in tool_calls_map:
-                        tool_calls_map[idx] = {
-                            "id": tc_delta.id or "",
-                            "name": tc_delta.function.name if tc_delta.function else "",
-                            "args": "",
-                        }
-                    if tc_delta.id:
-                        tool_calls_map[idx]["id"] = tc_delta.id
-                    if tc_delta.function:
-                        if tc_delta.function.name:
-                            tool_calls_map[idx]["name"] = tc_delta.function.name
-                        if tc_delta.function.arguments:
-                            tool_calls_map[idx]["args"] += tc_delta.function.arguments
+                if delta.tool_calls:
+                    for tc_delta in delta.tool_calls:
+                        idx = tc_delta.index
+                        if idx not in tool_calls_map:
+                            tool_calls_map[idx] = {
+                                "id": tc_delta.id or "",
+                                "name": tc_delta.function.name if tc_delta.function else "",
+                                "args": "",
+                            }
+                        if tc_delta.id:
+                            tool_calls_map[idx]["id"] = tc_delta.id
+                        if tc_delta.function:
+                            if tc_delta.function.name:
+                                tool_calls_map[idx]["name"] = tc_delta.function.name
+                            if tc_delta.function.arguments:
+                                tool_calls_map[idx]["args"] += tc_delta.function.arguments
 
-            finish = chunk.choices[0].finish_reason if chunk.choices else None
-            if finish in ("tool_calls", "stop") and tool_calls_map:
-                for tc in tool_calls_map.values():
-                    try:
-                        args = json.loads(tc["args"]) if tc["args"] else {}
-                    except json.JSONDecodeError:
-                        args = {"raw": tc["args"]}
-                    yield ToolCall(id=tc["id"], name=tc["name"], arguments=args)
-                tool_calls_map.clear()
+                finish = chunk.choices[0].finish_reason if chunk.choices else None
+                if finish == "length":
+                    raise RuntimeError(
+                        "Model output was truncated before completion. "
+                        "No reliable tool call can be executed from this partial response. "
+                        "Try a shorter request, a larger-output model, or build mode."
+                    )
+                if finish == "content_filter":
+                    raise RuntimeError("Model output was blocked by the provider content filter.")
+                if finish in ("tool_calls", "stop") and tool_calls_map:
+                    for tc in tool_calls_map.values():
+                        try:
+                            args = json.loads(tc["args"]) if tc["args"] else {}
+                        except json.JSONDecodeError:
+                            args = {"raw": tc["args"]}
+                        yield ToolCall(id=tc["id"], name=tc["name"], arguments=args)
+                    tool_calls_map.clear()
+        except RateLimitError as exc:
+            raise RuntimeError(self._format_rate_limit_error(exc)) from exc
+        except APIStatusError as exc:
+            if exc.status_code == 429:
+                raise RuntimeError(self._format_rate_limit_error(exc)) from exc
+            if exc.status_code == 404:
+                raise RuntimeError(self._format_not_found_error(exc)) from exc
+            raise
+        except NotFoundError as exc:
+            raise RuntimeError(self._format_not_found_error(exc)) from exc
+
+    def _format_rate_limit_error(self, exc: Exception) -> str:
+        retry_after = None
+        response = getattr(exc, "response", None)
+        if response is not None:
+            retry_after = response.headers.get("retry-after")
+        suffix = f" Retry after about {retry_after} seconds." if retry_after else " Wait a bit and retry."
+        if isinstance(self, NvidiaProvider):
+            return (
+                f"NVIDIA NIM rate limit hit for model '{self.model}' (HTTP 429 Too Many Requests)."
+                f"{suffix} For free NIM keys, try a smaller/faster model or wait before sending another request."
+            )
+        return f"Provider rate limit hit for model '{self.model}' (HTTP 429 Too Many Requests).{suffix}"
+
+    def _format_not_found_error(self, exc: Exception) -> str:
+        if isinstance(self, NvidiaProvider):
+            return (
+                f"NVIDIA NIM model/function for '{self.model}' was not found for this account (HTTP 404). "
+                "This usually means the model ID is unavailable, deprecated, or not enabled for your free key. "
+                "Use Update Models to refresh the live catalog, or switch to qwen/qwen3-coder-480b-a35b-instruct, "
+                "moonshotai/kimi-k2-instruct-0905, nvidia/nemotron-3-super-120b-a12b, or nvidia/nemotron-3-nano-30b-a3b if available."
+            )
+        return f"Provider model/function for '{self.model}' was not found (HTTP 404)."
 
     def _clean_content_delta(self, content: str) -> str:
         return content
+
+    def _format_messages(self, messages: list[Message], system: str) -> list[dict]:
+        """Convert Internal Message objects to OpenAI dict format."""
+        return _format_messages(messages, system)
+
+    def _convert_tools(self, tools: list[dict]) -> list[dict]:
+        """Convert internal tool schemas to OpenAI tool format."""
+        return _convert_tools(tools)
 
 
 # ── OpenAI ────────────────────────────────────────────────────────────────────
@@ -130,8 +192,8 @@ class OpenAIProvider(OpenAICompatibleProvider):
         "o4-mini": "o4-mini",
     }
 
-    def __init__(self, api_key: str, model: str | None = None):
-        super().__init__(api_key, model or "gpt-5.4-mini")
+    def __init__(self, api_key: str, model: str | None = None, base_url: str | None = None):
+        super().__init__(api_key, model or "gpt-5.4-mini", base_url)
 
 
 # ── Groq ──────────────────────────────────────────────────────────────────────
@@ -147,8 +209,8 @@ class GroqProvider(OpenAICompatibleProvider):
         "deepseek-r1-distill-llama-70b": "deepseek-r1-distill-llama-70b",
     }
 
-    def __init__(self, api_key: str, model: str | None = None):
-        super().__init__(api_key, model or "llama-3.3-70b-versatile")
+    def __init__(self, api_key: str, model: str | None = None, base_url: str | None = None):
+        super().__init__(api_key, model or "llama-3.3-70b-versatile", base_url)
 
 
 # ── Mistral ───────────────────────────────────────────────────────────────────
@@ -164,8 +226,8 @@ class MistralProvider(OpenAICompatibleProvider):
         "codestral-latest": "codestral-latest",
     }
 
-    def __init__(self, api_key: str, model: str | None = None):
-        super().__init__(api_key, model or "mistral-large-latest")
+    def __init__(self, api_key: str, model: str | None = None, base_url: str | None = None):
+        super().__init__(api_key, model or "mistral-large-latest", base_url)
 
 
 # ── DeepSeek ──────────────────────────────────────────────────────────────────
@@ -179,8 +241,8 @@ class DeepSeekProvider(OpenAICompatibleProvider):
         "deepseek-reasoner": "deepseek-reasoner",
     }
 
-    def __init__(self, api_key: str, model: str | None = None):
-        super().__init__(api_key, model or "deepseek-chat")
+    def __init__(self, api_key: str, model: str | None = None, base_url: str | None = None):
+        super().__init__(api_key, model or "deepseek-chat", base_url)
 
 
 # ── NVIDIA NIM ────────────────────────────────────────────────────────────────
@@ -190,19 +252,20 @@ class NvidiaProvider(OpenAICompatibleProvider):
     BASE_URL = "https://integrate.api.nvidia.com/v1"
     SUPPORTS_TOOLS = True
     SUPPORTS_IMAGES = True
+    MAX_TOKENS = 8192
 
     DEFAULT_MODELS = {
-        "nvidia/llama-3.3-nemotron-super-49b-v1": "nvidia/llama-3.3-nemotron-super-49b-v1",
-        "meta/llama-3.3-70b-instruct": "meta/llama-3.3-70b-instruct",
-        "meta/llama-3.1-405b-instruct": "meta/llama-3.1-405b-instruct",
+        "qwen/qwen3-coder-480b-a35b-instruct": "qwen/qwen3-coder-480b-a35b-instruct",
+        "moonshotai/kimi-k2-instruct-0905": "moonshotai/kimi-k2-instruct-0905",
+        "nvidia/nemotron-3-super-120b-a12b": "nvidia/nemotron-3-super-120b-a12b",
+        "nvidia/nemotron-3-nano-30b-a3b": "nvidia/nemotron-3-nano-30b-a3b",
         "deepseek-ai/deepseek-v3.1": "deepseek-ai/deepseek-v3.1",
         "deepseek-ai/deepseek-r1": "deepseek-ai/deepseek-r1",
-        "qwen/qwen3-coder-480b-a35b-instruct": "qwen/qwen3-coder-480b-a35b-instruct",
         "moonshotai/kimi-k2.5": "moonshotai/kimi-k2.5",
     }
 
-    def __init__(self, api_key: str, model: str | None = None):
-        super().__init__(api_key, model or "nvidia/llama-3.3-nemotron-super-49b-v1")
+    def __init__(self, api_key: str, model: str | None = None, base_url: str | None = None):
+        super().__init__(api_key, model or "qwen/qwen3-coder-480b-a35b-instruct", base_url)
 
     def stream_response(
         self,
@@ -219,32 +282,34 @@ class NvidiaProvider(OpenAICompatibleProvider):
         return super().stream_response(messages, tools, system)
 
     def _format_messages(self, messages: list[Message], system: str) -> list[dict]:
-        # NIM models sometimes ignore the 'system' role. 
-        # We merge it into the first user message for better instruction following.
-        formatted = super()._format_messages(messages, "") # Get formatted without system
+        # NVIDIA NIM models often handle 'system' role poorly.
+        # We merge it into the first user message or latest user message.
+        formatted = _format_messages(messages, "") # Get messages without system prompt
         
-        # Find first user message and prepend system prompt
+        # Filter out the empty system message that helper always adds at index 0
+        formatted = [m for m in formatted if not (m["role"] == "system" and not m["content"])]
+        
+        if not system:
+            return formatted
+
+        # Merge system prompt into the FIRST user message for maximum context influence
         for msg in formatted:
             if msg["role"] == "user":
                 if isinstance(msg["content"], str):
-                    msg["content"] = f"{system}\n\n{msg['content']}"
+                    msg["content"] = f"SYSTEM INSTRUCTIONS:\n{system}\n\nUSER MESSAGE:\n{msg['content']}"
                 elif isinstance(msg["content"], list):
-                    msg["content"].insert(0, {"type": "text", "text": system})
+                    msg["content"].insert(0, {"type": "text", "text": f"SYSTEM INSTRUCTIONS:\n{system}"})
                 break
         else:
-            # No user message found? Prepend a dummy one or use system role as fallback
-            formatted.insert(0, {"role": "system", "content": system})
+            # If no user message found, add one with just the instructions
+            formatted.insert(0, {"role": "user", "content": f"SYSTEM INSTRUCTIONS:\n{system}"})
             
         return formatted
 
     def _clean_content_delta(self, content: str) -> str:
-        if self._suppress_content:
-            return ""
-        # Improved regex to catch more variations of tool-calling tags
-        match = re.search(r"<\|(?:tool_calls_section_begin|tool_call_begin|DSML\|tool_calls|plugin_call|action)\|?", content)
-        if match:
-            self._suppress_content = True
-            return content[:match.start()].rstrip()
+        # Keep provider-emitted tool JSON visible to Agent._parse_manual_tool_calls.
+        # Some NIM/Nemotron responses put callable JSON behind text tags instead of
+        # returning OpenAI-compatible `tool_calls`; suppressing it makes execution impossible.
         return content
 
 

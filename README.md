@@ -1,4 +1,4 @@
-# CClaude — Multi-Provider AI Coding Assistant
+# Clod — Multi-Provider AI Coding Assistant
 
 A terminal-based AI coding assistant (Claude Code alternative) that works with **Anthropic Claude**, **OpenAI ChatGPT**, **Google Gemini**, **Groq**, **Mistral**, **DeepSeek**, **NVIDIA NIM**, **Tavily Search**, **Cohere**, and **Ollama** — using your own API keys.
 
@@ -146,7 +146,7 @@ In **explore** and **plan** modes, only read-only tools (read_file, glob, grep, 
 
 ## Markdown Skills
 
-CClaude loads project markdown instructions into the agent system prompt from:
+Clod loads project markdown instructions into the agent system prompt from:
 
 - `AGENTS.md`
 - `CLAUDE.md`

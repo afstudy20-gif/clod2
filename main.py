@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-CClaude - A multi-provider AI coding assistant (Claude Code alternative)
+Clod - A multi-provider AI coding assistant (Claude Code alternative)
 
 Supports: Anthropic Claude, OpenAI ChatGPT, Google Gemini, Groq, Mistral, DeepSeek, NVIDIA NIM, Tavily, Ollama, Cohere
 """
@@ -94,7 +94,7 @@ def print_banner(provider_name: str, model: str, project_root: str | None = None
     if project_root:
         info += f"Project: [bold]{project_name(project_root)}[/bold] ({project_root})\n"
     info += "Commands: /help  /status  /clear  /model  /provider  /plan  /diff  /push  /exit"
-    console.print(Panel(info, title="CClaude - Multi-API Coding Assistant", border_style=color))
+    console.print(Panel(info, title="Clod - Multi-API Coding Assistant", border_style=color))
 
 
 def get_prompt_style(provider_name: str) -> Style:
@@ -275,7 +275,7 @@ def main(
     project: str | None,
     resume: bool,
 ):
-    """CClaude - Multi-provider AI coding assistant."""
+    """Clod - Multi-provider AI coding assistant."""
 
     if list_providers:
         console.print("\n[bold]Available providers:[/bold]")

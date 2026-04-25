@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Cclaude</title>
+<title>Clod</title>
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
@@ -732,7 +732,7 @@
   <!-- Sidebar -->
   <div id="sidebar">
     <div id="sidebar-header">
-      <span class="logo">Cclaude<span> / AI</span></span>
+      <span class="logo">Clod<span> / AI</span></span>
     </div>
 
     <button id="new-chat-btn" onclick="newChat()">
@@ -762,6 +762,16 @@
           <button class="settings-btn" onclick="browseWorkspace()" title="Browse local folder" style="padding:0 8px;">📁</button>
         </div>
       </div>
+      <div>
+        <div class="field-label">Mode</div>
+        <select id="mode-select" onchange="onModeChange()">
+          <option value="chat">Chat</option>
+          <option value="build">Build</option>
+          <option value="debug">Debug</option>
+          <option value="explore">Explore</option>
+          <option value="plan">Plan</option>
+        </select>
+      </div>
       <div style="display:flex;gap:6px;">
         <button class="settings-btn" onclick="openKeyModal()" style="flex:1">API Keys</button>
         <button class="settings-btn" onclick="updateModels()" style="flex:1">Update Models</button>
@@ -769,6 +779,16 @@
       </div>
       <div id="model-update-result"></div>
       <div id="push-result"></div>
+
+      <div class="quick-tools">
+        <div class="field-label">Quick Tools</div>
+        <div class="quick-tool-grid">
+          <button class="tool-btn" onclick="manualRead()">Read File</button>
+          <button class="tool-btn" onclick="manualWrite()">Write File</button>
+          <button class="tool-btn" onclick="manualBash()">Run Bash</button>
+          <button class="tool-btn" onclick="manualList()">List Dir</button>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -779,6 +799,7 @@
       <span class="status-dot green" id="tb-status-dot"></span>
       <span class="provider-badge" id="tb-provider">openai</span>
       <span class="model-badge" id="tb-model"></span>
+      <button class="topbar-btn" onclick="copyAllChat()" title="Copy entire chat history">Copy All</button>
       <button class="topbar-btn" id="topbar-update-models-btn" onclick="updateModels()">Update Models</button>
       <span id="topbar-model-update-result"></span>
       <div id="token-monitor" title="Estimated prompt tokens in the active chat, including draft input">
@@ -794,7 +815,7 @@
     <!-- Messages -->
     <div id="messages">
       <div id="welcome">
-        <div class="big-logo">Cclaude</div>
+        <div class="big-logo">Clod</div>
         <div class="tagline">Multi-provider AI coding assistant</div>
         <div class="hints">
           <div class="hint" onclick="sendHint(this)">
@@ -817,7 +838,7 @@
     <div id="input-area">
       <div id="input-wrapper">
         <div id="attachment-preview"></div>
-        <textarea id="user-input" rows="1" placeholder="Message Cclaude..." onkeydown="handleKey(event)" oninput="autoResize(this)"></textarea>
+        <textarea id="user-input" rows="1" placeholder="Message Clod..." onkeydown="handleKey(event)" oninput="autoResize(this)"></textarea>
         <div id="input-footer">
           <div id="input-hints">
             <span><span class="hint-key">Enter</span> send</span>
@@ -857,7 +878,7 @@ let MODELS = {
   groq:       ['llama-3.3-70b-versatile','llama-3.1-8b-instant','gemma2-9b-it','deepseek-r1-distill-llama-70b'],
   mistral:    ['mistral-large-latest','mistral-medium-latest','mistral-small-latest','codestral-latest'],
   deepseek:   ['deepseek-chat','deepseek-reasoner'],
-  nvidia:     ['moonshotai/kimi-k2.5','deepseek-ai/deepseek-v3.1','deepseek-ai/deepseek-r1','nvidia/llama-3.1-nemotron-ultra-253b-v1','nvidia/llama-3.3-nemotron-super-49b-v1','meta/llama-3.1-405b-instruct','meta/llama-3.3-70b-instruct','qwen/qwen3-coder-480b-a35b-instruct'],
+  nvidia:     ['qwen/qwen3-coder-480b-a35b-instruct','moonshotai/kimi-k2-instruct-0905','nvidia/nemotron-3-super-120b-a12b','nvidia/nemotron-3-nano-30b-a3b','deepseek-ai/deepseek-v3.1','deepseek-ai/deepseek-r1','moonshotai/kimi-k2.5'],
   cohere:     ['command-a-03-2025','command-a-reasoning','command-a-vision','command-r-plus','command-r7b-12-2024'],
   tavily:     ['tavily-search','tavily-answer-basic','tavily-answer-advanced'],
   ollama:     ['llama3.2','qwen2.5-coder','phi4','deepseek-r1','mistral','codellama','gemma2'],
@@ -935,6 +956,7 @@ async function init() {
   const savedProvider = localStorage.getItem('cclaude_provider') || 'openai';
   const savedModel = localStorage.getItem('cclaude_model');
   document.getElementById('workspace-input').value = localStorage.getItem('cclaude_workspace') || '';
+  document.getElementById('mode-select').value = localStorage.getItem('cclaude_mode') || 'chat';
   ps.value = savedProvider;
   onProviderChange();
   if (savedModel) {
@@ -1034,7 +1056,7 @@ async function updateModels(provider = null) {
 
 async function loadKeyStatuses() {
   try {
-    const resp = await fetch('/config/keys');
+    const resp = await fetch('/config/keys/status');
     if (resp.ok) keyStatuses = await resp.json();
   } catch {}
 }
@@ -1053,6 +1075,11 @@ function onProviderChange() {
 
 function onWorkspaceChange() {
   localStorage.setItem('cclaude_workspace', document.getElementById('workspace-input').value.trim());
+}
+
+function onModeChange() {
+  localStorage.setItem('cclaude_mode', document.getElementById('mode-select').value);
+  updateTopbar();
 }
 
 async function pushToGithub() {
@@ -1092,8 +1119,9 @@ document.addEventListener('DOMContentLoaded', () => {
 function updateTopbar() {
   const p = document.getElementById('provider-select').value;
   const m = document.getElementById('model-select').value;
+  const mode = document.getElementById('mode-select')?.value || 'chat';
   document.getElementById('tb-provider').textContent = PROVIDER_NAMES[p] || p;
-  document.getElementById('tb-model').textContent = m;
+  document.getElementById('tb-model').textContent = mode === 'chat' ? m : `${m} / ${mode}`;
 
   const ks = keyStatuses[p];
   const keyEl = document.getElementById('tb-key-status');
@@ -1206,7 +1234,7 @@ function loadChat(id) {
 function showWelcome() {
   document.getElementById('messages').innerHTML = `
     <div id="welcome">
-      <div class="big-logo">Cclaude</div>
+      <div class="big-logo">Clod</div>
       <div class="tagline">Multi-provider AI coding assistant</div>
       <div class="hints">
         <div class="hint" onclick="sendHint(this)"><strong>Write code</strong>Write a Python function to parse JSON</div>
@@ -1437,6 +1465,7 @@ async function streamAssistant(chat) {
       messages: chat.messages,
       provider,
       model,
+      mode: document.getElementById('mode-select').value,
       workspace: document.getElementById('workspace-input').value.trim() || null,
     };
 
@@ -1517,6 +1546,31 @@ function stopGeneration() {
     isStreaming = false;
     document.getElementById('send-btn').disabled = false;
     document.getElementById('stop-btn').style.display = 'none';
+  }
+}
+
+async function copyAllChat() {
+  const currentChat = chats.find(c => c.id === currentChatId);
+  if (!currentChat || !currentChat.messages.length) return;
+  
+  const text = currentChat.messages.map(m => {
+    const role = m.role.charAt(0).toUpperCase() + m.role.slice(1);
+    const content = typeof m.content === 'string' ? m.content : JSON.stringify(m.content);
+    return `### ${role}\n${content}\n`;
+  }).join('\n---\n\n');
+  
+  try {
+    await navigator.clipboard.writeText(text);
+    const btn = event.currentTarget;
+    const oldText = btn.textContent;
+    btn.textContent = 'Copied!';
+    btn.style.color = 'var(--green)';
+    setTimeout(() => {
+      btn.textContent = oldText;
+      btn.style.color = '';
+    }, 2000);
+  } catch (err) {
+    console.error('Failed to copy chat:', err);
   }
 }
 
@@ -1847,6 +1901,48 @@ async function saveKey(provider) {
 document.addEventListener('click', (e) => {
   if (e.target.id === 'key-modal') closeKeyModal();
 });
+
+// Manual Tools
+async function runTool(tool, args) {
+  const ws = document.getElementById('workspace-input').value.trim() || null;
+  try {
+    const resp = await fetch('/tools/run', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tool, arguments: args, workspace: ws }),
+    });
+    const data = await resp.json();
+    if (data.ok) {
+      alert(data.result);
+    } else {
+      alert('Tool failed: ' + data.error);
+    }
+  } catch (e) {
+    alert('Error: ' + e.message);
+  }
+}
+
+function manualRead() {
+  const path = prompt('Enter relative path to read:');
+  if (path) runTool('read_file', { path });
+}
+
+function manualWrite() {
+  const path = prompt('Enter relative path to write:');
+  if (!path) return;
+  const content = prompt('Enter file content (or leave empty to create empty file):');
+  runTool('write_file', { path, content: content || '' });
+}
+
+function manualBash() {
+  const command = prompt('Enter bash command:');
+  if (command) runTool('bash', { command });
+}
+
+function manualList() {
+  const path = prompt('Enter relative path to list (default is .):', '.');
+  if (path !== null) runTool('list_dir', { path });
+}
 
 // Boot
 init();
