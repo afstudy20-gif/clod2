@@ -2,13 +2,15 @@
 
 A terminal-based AI coding assistant (Claude Code alternative) that works with **Anthropic Claude**, **OpenAI ChatGPT**, **Google Gemini**, **Groq**, **Mistral**, **DeepSeek**, **NVIDIA NIM**, **Tavily Search**, **Cohere**, and **Ollama** — using your own API keys.
 
+**Live app:** https://clod.drtr.uk/
+
 ## Features
 
 - **Multi-provider**: Switch between 10 providers in one session
 - **Agentic tool use**: reads/writes/edits files, runs bash commands, searches code
 - **Session resume**: Save and load conversation history across restarts
 - **Project-aware**: Auto-detects project root, resolves paths relative to it
-- **Modes**: Normal, Explore (read-only), and Plan (plan then execute)
+- **Modes**: Chat, Explore / Plan (read-only), and Build / Debug
 - **Loop mode**: Run prompts on a recurring interval
 - **Interactive model picker**: Browse and switch models easily
 - **Streaming**: Responses stream in real time with tool execution indicators

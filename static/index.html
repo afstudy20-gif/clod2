@@ -799,8 +799,7 @@
         <select id="mode-select" onchange="onModeChange()">
           <option value="chat">Chat</option>
           <option value="build_debug">Build / Debug</option>
-          <option value="explore">Explore</option>
-          <option value="plan">Plan</option>
+          <option value="explore_plan">Explore / Plan</option>
         </select>
       </div>
       <div style="display:flex;gap:6px;">
@@ -998,7 +997,7 @@ async function init() {
   const savedModel = localStorage.getItem('cclaude_model');
   document.getElementById('workspace-input').value = localStorage.getItem('cclaude_workspace') || '';
   const savedMode = localStorage.getItem('cclaude_mode') || 'chat';
-  document.getElementById('mode-select').value = savedMode === 'build' || savedMode === 'debug' ? 'build_debug' : savedMode;
+  document.getElementById('mode-select').value = normalizeSavedMode(savedMode);
   ps.value = savedProvider;
   onProviderChange();
   if (savedModel) {
@@ -1121,8 +1120,23 @@ function onWorkspaceChange() {
 }
 
 function onModeChange() {
-  localStorage.setItem('cclaude_mode', document.getElementById('mode-select').value);
+  const modeSelect = document.getElementById('mode-select');
+  modeSelect.value = normalizeSavedMode(modeSelect.value);
+  localStorage.setItem('cclaude_mode', modeSelect.value);
   updateTopbar();
+}
+
+function normalizeSavedMode(mode) {
+  if (mode === 'build' || mode === 'debug') return 'build_debug';
+  if (mode === 'explore' || mode === 'plan') return 'explore_plan';
+  if (['chat', 'build_debug', 'explore_plan'].includes(mode)) return mode;
+  return 'chat';
+}
+
+function formatModeLabel(mode) {
+  if (mode === 'build_debug') return 'Build / Debug';
+  if (mode === 'explore_plan') return 'Explore / Plan';
+  return mode;
 }
 
 async function pushToGithub() {
@@ -1167,7 +1181,7 @@ function updateTopbar() {
   const p = document.getElementById('provider-select').value;
   const m = document.getElementById('model-select').value;
   const mode = document.getElementById('mode-select')?.value || 'chat';
-  const modeLabel = mode === 'build_debug' ? 'Build / Debug' : mode;
+  const modeLabel = formatModeLabel(mode);
   document.getElementById('tb-provider').textContent = PROVIDER_NAMES[p] || p;
   document.getElementById('tb-model').textContent = mode === 'chat' ? m : `${m} / ${modeLabel}`;
 
@@ -1553,6 +1567,14 @@ async function sendMessage() {
     return;
   }
 
+  const modeSelect = document.getElementById('mode-select');
+  const requestedMode = maybeConfirmToolMode(text, modeSelect.value);
+  if (requestedMode === null) return;
+  if (requestedMode && requestedMode !== modeSelect.value) {
+    modeSelect.value = requestedMode;
+    onModeChange();
+  }
+
   if (!currentChatId) newChat();
   const welcomeEl = document.getElementById('welcome');
   if (welcomeEl) welcomeEl.remove();
@@ -1575,6 +1597,47 @@ async function sendMessage() {
 
   appendUserMsg(text, true, images);
   await streamAssistant(chat);
+}
+
+function maybeConfirmToolMode(text, currentMode) {
+  if (currentMode !== 'chat') return currentMode;
+  const suggestedMode = inferToolMode(text);
+  if (!suggestedMode) return currentMode;
+
+  const label = formatModeLabel(suggestedMode);
+  const ok = confirm(
+    `This looks like it needs local tools (${label} mode).\n\n` +
+    `Switch to ${label} and continue?`
+  );
+  return ok ? suggestedMode : currentMode;
+}
+
+function inferToolMode(text) {
+  const t = (text || '').toLowerCase();
+  if (!t.trim()) return null;
+  if (t.startsWith('/build') || t.startsWith('/debug')) return 'build_debug';
+  if (t.startsWith('/explore') || t.startsWith('/plan')) return 'explore_plan';
+
+  const planMarkers = [
+    'plan ', 'make a plan', 'implementation plan', 'roadmap', 'approach'
+  ];
+  if (planMarkers.some(m => t.includes(m))) return 'explore_plan';
+
+  const exploreMarkers = [
+    'analyze code', 'analyse code', 'code structure', 'explain this repo',
+    'inspect repo', 'read the code', 'find where', 'where is', 'architecture'
+  ];
+  if (exploreMarkers.some(m => t.includes(m))) return 'explore_plan';
+
+  const toolMarkers = [
+    'fix', 'debug', 'error', 'traceback', 'exception', 'failing', 'failed',
+    'not working', "doesn't work", 'run ', 'execute', 'test ', 'install',
+    'create file', 'write file', 'edit file', 'update file', 'read file',
+    'list dir', 'ls ', 'cat ', 'python ', 'python3 ', 'npm ', 'pip ',
+    'server', 'start dev', 'dev server', 'build', 'compile', 'push',
+    'commit', 'git ', 'clone', 'scrape', 'api key', '.env'
+  ];
+  return toolMarkers.some(m => t.includes(m)) ? 'build_debug' : null;
 }
 
 async function streamAssistant(chat) {

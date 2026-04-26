@@ -43,7 +43,7 @@ class ChatRequest(BaseModel):
     provider: str = "openai"
     model: str | None = None
     system: str = "You are a helpful assistant."
-    mode: str = "chat"               # "chat" | "build" | "debug" | "explore" | "plan"
+    mode: str = "chat"               # "chat" | "build" | "debug" | "explore_plan"
     github_repo: str | None = None   # e.g. "owner/repo" — included in system prompt if set
     github_branch: str = "main"
     workspace: str | None = None     # local project directory for file tools
@@ -163,13 +163,17 @@ def _apply_chat_mode(message, mode: str):
     normalized = (mode or "chat").strip().lower()
     if normalized == "build_debug":
         normalized = _infer_build_or_debug_mode(message)
-    if normalized not in {"build", "debug", "explore", "plan"}:
+    if normalized in {"explore", "plan"}:
+        normalized = "explore_plan"
+    if normalized not in {"build", "debug", "explore_plan"}:
         return message
     if not isinstance(message, str):
         return message
     stripped = message.lstrip()
     if stripped.startswith(("/build", "/debug", "/explore", "/plan")):
         return message
+    if normalized == "explore_plan":
+        return f"/explore {message}"
     return f"/{normalized} {message}"
 
 

@@ -13,51 +13,21 @@ from .skills import load_project_instructions
 SYSTEM_PROMPT = """You are an AI coding assistant (similar to Claude Code) running in the terminal.
 You help users with software engineering tasks: writing code, debugging, refactoring, explaining code, running commands, and navigating codebases.
 
-You have access to tools that let you:
-- Read, write, and edit files
-- Run shell commands
-- Search files by name (glob) or content (grep)
-- List directories
+You are currently in CHAT MODE. Answer conversationally and do not inspect files or run commands.
 
 Guidelines:
-- You HAVE access to the tools listed below. Use them whenever needed.
-- IMPORTANT: You are NOT just a chat model; you are an active agent.
-- When the user asks to debug, investigate, fix an error, or find why something fails, use the tools to inspect files, run commands, reproduce the issue, and apply a fix when appropriate.
-- Do not answer with generic limitations such as not having an IDE debugger. You can debug through file inspection, logs, tests, shell commands, and targeted edits.
-- Do not write hypothetical tool calls. If you need to edit a file, emit a real structured tool call for edit_file or write_file.
-- Each bash call runs in a fresh shell. A standalone `cd some_dir` does not persist to later tool calls; combine it with the command, e.g. `cd some_dir && python3 script.py`, or use file-tool paths relative to the workspace.
-
-AVAILABLE TOOLS:
-- read_file(path, offset, limit): Open and view source code, configs, documentation.
-- write_file(path, content): Create new files with specific content.
-- edit_file(path, old_string, new_string): Make targeted changes to existing code.
-- bash(command): Execute bash commands, run tests, install packages, git operations.
-- git_init(): Initialize a git repository in the project root.
-- grep_search(pattern, path): Search for code patterns using regex.
-- list_dir(path): List directories to understand project structure.
-- glob_files(pattern): Find files matching a glob pattern.
-
-MANDATORY RULE:
-- Your VERY FIRST action in any new conversation or project MUST be to call `list_dir(".")` to verify your environment and prove to the user that you are connected. Do not skip this.
-- If you claim you don't have access, you are hallucinating.
-
-Format for calling tools:
-{"name": "write_file", "arguments": {"path": "main.py", "content": "print('hello')"}}
+- For simple status or conversational questions, answer directly.
+- If the user wants filesystem work, debugging, building, shell commands, or code edits, tell them to switch to Build / Debug mode or start the message with /build or /debug.
+- If the user wants codebase analysis or an implementation plan, tell them to switch to Explore / Plan mode or start the message with /explore or /plan.
+- Do not call tools in Chat mode.
 """
 
-EXPLORE_SYSTEM_PROMPT = """You are in EXPLORE MODE. Help the user understand the codebase.
+EXPLORE_PLAN_SYSTEM_PROMPT = """You are in EXPLORE / PLAN MODE. Help the user understand the codebase and produce plans when useful.
 
 You can ONLY use read-only tools: read_file, glob, grep, list_dir, github_read_file, github_list_dir, github_search_code.
 DO NOT modify any files. Focus on explaining code, architecture, patterns, and relationships.
 When the user asks about code, read the relevant files and explain clearly.
-Provide thorough analysis with file paths and line references.
-"""
-
-PLAN_SYSTEM_PROMPT = """You are in PLAN MODE. Your task is to explore the codebase using the provided read-only tools and produce a structured implementation plan.
-
-DO NOT modify any files in this mode. You may only use read-only tools.
-
-After exploring, produce a plan in this format:
+When the user asks for a plan, explore enough context and produce a structured implementation plan.
 
 ## Plan
 1. [Step with file path and description of change]
@@ -131,7 +101,7 @@ class Agent:
         self.registry = registry
         self.max_tool_rounds = max_tool_rounds
         self.history: list[Message] = []
-        self.mode: str = "normal"  # "normal", "explore", "plan"
+        self.mode: str = "normal"  # "chat", "explore_plan", "build", "debug"
         self.project_root = project_root
         self.session_id: str | None = None
         
@@ -145,10 +115,8 @@ class Agent:
             self.instructions = (self.instructions + "\n\n" + global_instr).strip()
 
     def _get_system_prompt(self) -> str:
-        if self.mode == "explore":
-            base = EXPLORE_SYSTEM_PROMPT
-        elif self.mode == "plan":
-            base = PLAN_SYSTEM_PROMPT
+        if self.mode in ("explore", "plan", "explore_plan"):
+            base = EXPLORE_PLAN_SYSTEM_PROMPT
         elif self.mode == "build":
             base = BUILD_SYSTEM_PROMPT
         elif self.mode == "debug":
@@ -167,15 +135,18 @@ class Agent:
                     f"{self.instructions}"
                 )
 
-        # Force tool support (never tell the model it's not supported)
-        base += "\n\nCRITICAL: You HAVE access to local filesystem and shell tools. If you claim you don't have access, you are hallucinating. Use the tools immediately."
+        # Force tool support only in action modes. Plain chat should not inspect files.
+        if self.mode != "chat":
+            base += "\n\nCRITICAL: You HAVE access to local filesystem and shell tools. If you claim you don't have access, you are hallucinating. Use the tools immediately."
 
         return base
 
     def _get_tool_schemas(self) -> list[dict]:
         if not getattr(self.provider, "SUPPORTS_TOOLS", True):
             return []
-        if self.mode in ("explore", "plan"):
+        if self.mode == "chat":
+            return []
+        if self.mode in ("explore", "plan", "explore_plan"):
             return self.registry.get_schemas(readonly_only=True)
         return self.registry.get_schemas()
 
@@ -187,10 +158,10 @@ class Agent:
             msg_text = "\n".join(p.get("text", "") for p in user_message if isinstance(p, dict) and p.get("type") == "text")
         
         if msg_text.startswith("/plan"):
-            self.mode = "plan"
+            self.mode = "explore_plan"
             user_message = msg_text.replace("/plan", "", 1).strip() or "Please provide a plan."
         elif msg_text.startswith("/explore"):
-            self.mode = "explore"
+            self.mode = "explore_plan"
             user_message = msg_text.replace("/explore", "", 1).strip() or "Please explore the codebase."
         elif msg_text.startswith("/build"):
             self.mode = "build"
