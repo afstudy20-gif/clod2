@@ -6,6 +6,8 @@ import re
 import subprocess
 from pathlib import Path
 
+import requests
+
 # Project root for resolving relative paths
 _project_root: str | None = None
 
@@ -196,6 +198,52 @@ def bash(command: str, timeout: int = 30) -> str:
         return f"Error: Command timed out after {timeout}s"
     except Exception as e:
         return f"Error: {e}"
+
+
+def tavily_search(query: str, max_results: int = 5, search_depth: str = "basic", include_answer: bool = True) -> str:
+    """Search the web through Tavily using the configured Tavily API key."""
+    from ..core.config import get_api_key, load_config
+
+    api_key = get_api_key("tavily", load_config())
+    if not api_key:
+        return "Error: TAVILY_API_KEY is not configured. Ask the user to add a Tavily API key before web search."
+
+    depth = "advanced" if str(search_depth).lower() == "advanced" else "basic"
+    payload = {
+        "query": query,
+        "max_results": max(1, min(int(max_results or 5), 10)),
+        "search_depth": depth,
+        "include_answer": bool(include_answer),
+        "include_raw_content": False,
+    }
+    resp = requests.post(
+        "https://api.tavily.com/search",
+        headers={"Authorization": f"Bearer {api_key}"},
+        json=payload,
+        timeout=30,
+    )
+    if resp.status_code >= 400:
+        return f"Error: Tavily search failed ({resp.status_code}): {resp.text[:500]}"
+
+    data = resp.json()
+    lines = []
+    answer = (data.get("answer") or "").strip()
+    if answer:
+        lines.append(f"Answer: {answer}")
+
+    results = data.get("results") or []
+    if results:
+        lines.append("Sources:")
+        for i, item in enumerate(results, 1):
+            title = item.get("title") or item.get("url") or f"Result {i}"
+            url = item.get("url") or ""
+            content = (item.get("content") or "").strip()
+            line = f"{i}. {title} - {url}"
+            if content:
+                line += f"\n   {content[:400]}"
+            lines.append(line)
+
+    return "\n".join(lines) if lines else "No Tavily results found."
 
 
 def _should_detach_background_command(command: str) -> bool:

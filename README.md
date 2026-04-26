@@ -4,11 +4,17 @@ A terminal-based AI coding assistant (Claude Code alternative) that works with *
 
 **Live app:** https://clod.drtr.uk/
 
+## Privacy
+
+- Web chat history is stored in the browser's `localStorage`, not in a server database.
+- The `/chat` endpoint does not persist conversation history on the server.
+- Messages still pass through the server while a response is generated, but they are not saved by Clod after the request completes.
+
 ## Features
 
 - **Multi-provider**: Switch between 10 providers in one session
 - **Agentic tool use**: reads/writes/edits files, runs bash commands, searches code
-- **Session resume**: Save and load conversation history across restarts
+- **Browser-local chat history**: Conversations stay in the user's browser storage
 - **Project-aware**: Auto-detects project root, resolves paths relative to it
 - **Modes**: Chat, Explore / Plan (read-only), and Build / Debug
 - **Loop mode**: Run prompts on a recurring interval

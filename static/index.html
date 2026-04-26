@@ -1568,6 +1568,7 @@ async function sendMessage() {
   }
 
   const modeSelect = document.getElementById('mode-select');
+  maybeConfirmWebSearch(text, modeSelect.value);
   const requestedMode = maybeConfirmToolMode(text, modeSelect.value);
   if (requestedMode === null) return;
   if (requestedMode && requestedMode !== modeSelect.value) {
@@ -1610,6 +1611,44 @@ function maybeConfirmToolMode(text, currentMode) {
     `Switch to ${label} and continue?`
   );
   return ok ? suggestedMode : currentMode;
+}
+
+function maybeConfirmWebSearch(text, currentMode) {
+  if (currentMode !== 'chat') return false;
+  if (!inferWebSearchNeed(text)) return false;
+  const providerSelect = document.getElementById('provider-select');
+  if (providerSelect.value === 'tavily') return true;
+
+  const tavilyStatus = keyStatuses.tavily || {};
+  const ok = confirm(
+    'This may need current web information. Use Tavily Search for this message?'
+  );
+  if (!ok) return false;
+  if (!tavilyStatus.configured) {
+    alert('Tavily API key is not configured. Add TAVILY_API_KEY in API Keys first.');
+    return false;
+  }
+
+  providerSelect.value = 'tavily';
+  onProviderChange();
+  const modelSelect = document.getElementById('model-select');
+  if ([...modelSelect.options].some(o => o.value === 'tavily-answer-advanced')) {
+    modelSelect.value = 'tavily-answer-advanced';
+    localStorage.setItem('cclaude_model', modelSelect.value);
+  }
+  updateTopbar();
+  return true;
+}
+
+function inferWebSearchNeed(text) {
+  const t = (text || '').toLowerCase();
+  const markers = [
+    'latest', 'current', 'today', 'yesterday', 'this week', 'recent',
+    'news', 'price', 'stock', 'weather', 'schedule', 'score',
+    'look up', 'search web', 'web search', 'internet', 'online',
+    'güncel', 'bugün', 'son haber', 'internetten', 'webde', 'araştır'
+  ];
+  return markers.some(m => t.includes(m));
 }
 
 function inferToolMode(text) {

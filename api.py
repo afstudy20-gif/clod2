@@ -16,6 +16,7 @@ from src.core.session import list_sessions, load_session, save_session, delete_s
 from src.providers import get_provider, PROVIDERS
 
 app = FastAPI(title="Clod API", version="0.1.0")
+SERVER_CHAT_PERSISTENCE = False
 
 app.add_middleware(
     CORSMiddleware,
@@ -109,9 +110,10 @@ def chat(req: ChatRequest):
         traceback.print_exc()
         raise HTTPException(status_code=400, detail=f"Workspace error: {e}")
 
-    # Load session history if provided
+    # Web chat persistence is intentionally disabled. The browser UI stores chats
+    # in localStorage and /chat must not write conversation history on the server.
     session_messages: list[InternalMessage] = []
-    if req.session_id:
+    if SERVER_CHAT_PERSISTENCE and req.session_id:
         try:
             session_messages, _ = load_session(req.session_id)
         except Exception as e:
@@ -149,8 +151,8 @@ def chat(req: ChatRequest):
             traceback.print_exc()  # Log to server console
             yield f"data: {json.dumps({'error': str(e)})}\n\n"
 
-        # Auto-save session if session_id provided
-        if req.session_id:
+        # Server-side web chat persistence is disabled by default.
+        if SERVER_CHAT_PERSISTENCE and req.session_id:
             save_session(req.session_id, agent.history, req.provider, model or "")
 
         yield "data: [DONE]\n\n"

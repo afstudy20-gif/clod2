@@ -24,10 +24,11 @@ Guidelines:
 
 EXPLORE_PLAN_SYSTEM_PROMPT = """You are in EXPLORE / PLAN MODE. Help the user understand the codebase and produce plans when useful.
 
-You can ONLY use read-only tools: read_file, glob, grep, list_dir, github_read_file, github_list_dir, github_search_code.
+You can ONLY use read-only tools: read_file, glob, grep, list_dir, github_read_file, github_list_dir, github_search_code, tavily_search.
 DO NOT modify any files. Focus on explaining code, architecture, patterns, and relationships.
 When the user asks about code, read the relevant files and explain clearly.
 When the user asks for a plan, explore enough context and produce a structured implementation plan.
+Use tavily_search only when the user explicitly requested web/current/latest information or approved web access. If web access is needed but not approved, ask for approval instead of guessing.
 
 ## Plan
 1. [Step with file path and description of change]
@@ -62,6 +63,7 @@ CRITICAL: You MUST use the tools (write_file, edit_file, bash) immediately.
 - For debugging tasks, inspect files, reproduce or verify the issue with bash when possible, then fix it with write_file or edit_file when a code change is needed.
 - For web scraping with Python requests, HTTP 403 from a public page usually means the script needs realistic request headers such as User-Agent, Accept, and Accept-Language; update the script and rerun it.
 - Python FutureWarning output is not the root failure if the command later shows a traceback; debug the final exception. For Gemini `404 model ... not found`, list available models and choose one that supports `generateContent` instead of guessing old model IDs.
+- For current/latest/external web information, ask for web access approval first. If approved or explicitly requested, use tavily_search with the configured Tavily API key and cite the returned sources.
 - For remote git tasks, report the exact terminal output of git commands and never claim a push succeeded if the command returned an error.
 
 If the directory is empty, start with the main application files (e.g., main.py, requirements.txt, index.html).
@@ -84,6 +86,7 @@ CRITICAL: You MUST use tools immediately.
 - Use edit_file or write_file to fix the bug when the cause is clear.
 - For web scraping with Python requests, HTTP 403 from a public page usually means the script needs realistic request headers such as User-Agent, Accept, and Accept-Language; update the script and rerun it.
 - Python FutureWarning output is not the root failure if the command later shows a traceback; debug the final exception. For Gemini `404 model ... not found`, list available models and choose one that supports `generateContent` instead of guessing old model IDs.
+- For current/latest/external web information, ask for web access approval first. If approved or explicitly requested, use tavily_search with the configured Tavily API key and cite the returned sources.
 - For JavaScript, HTML, CSS, JSON, or other source-file edits, prefer read_file followed by write_file with the complete corrected file content when edit_file quoting would be fragile.
 - After a fix, run the most relevant verification command.
 """
@@ -181,6 +184,7 @@ class Agent:
         file_mutation_tool_seen = False
         last_tool_error = ""
         recent_tool_call_keys: dict[tuple[str, str], int] = {}
+        error_signatures: dict[str, int] = {}
 
         exhausted_rounds = True
         for _ in range(self.max_tool_rounds):
@@ -398,28 +402,17 @@ class Agent:
                     self._is_file_mutation_tool(name) for name in executed_tool_names
                 )
             if self.mode in ("build", "debug") and any(tr.is_error for tr in tool_results):
-                failed_results = [
-                    f"- {name}: {tr.content[:1000]}"
-                    for name, tr in zip(executed_tool_names, tool_results)
-                    if tr.is_error
-                ]
+                failed_results = []
+                for call, result in zip(tool_calls_seen, tool_results):
+                    if result.is_error:
+                        failed_results.append(f"- {call.name}: {result.content[:1000]}")
+                combined_error = "\n".join(failed_results)
+                signature = self._error_signature(combined_error)
+                error_signatures[signature] = error_signatures.get(signature, 0) + 1
                 self.history.append(
                     Message(
                         role="user",
-                        content=(
-                            "The previous tool call failed:\n"
-                            + "\n".join(failed_results)
-                            + "\n\nRetry with valid structured tool arguments. "
-                            "For source-code changes, read_file first, then use write_file with the "
-                            "complete corrected file content. Do not use shell quoting, heredocs, echo, "
-                            "printf, cat, or redirection to create or edit source files. "
-                            "For git commands, use paths relative to the actual git repository root, "
-                            "or run `cd path/to/repo && git ...` inside the bash command. "
-                            "If a branch already exists, switch to it with `git checkout branch` "
-                            "instead of creating it again with `git checkout -b branch`. "
-                            "If the requested work is already complete, stop calling tools and provide "
-                            "the final answer as normal assistant text."
-                        ),
+                        content=self._build_recovery_instruction(combined_error, error_signatures[signature]),
                     )
                 )
         else:
@@ -535,6 +528,75 @@ class Agent:
             "write/edit/bash/git action completed."
         )
 
+    def _error_signature(self, text: str) -> str:
+        lowered = text.lower()
+        patterns = [
+            "repeated identical tool call blocked",
+            "path not found",
+            "file not found",
+            "no such file or directory",
+            "permission denied",
+            "command timed out",
+            "http 403",
+            "403 client error",
+            "http 404",
+            "not found",
+            "http 410",
+            "gone",
+            "syntaxerror",
+            "traceback",
+            "placeholder",
+            "rate limit",
+            "too many requests",
+        ]
+        for pattern in patterns:
+            if pattern in lowered:
+                return pattern
+        normalized = re.sub(r"0x[0-9a-f]+|\d+", "#", lowered)
+        return normalized[:160]
+
+    def _build_recovery_instruction(self, combined_error: str, repeat_count: int) -> str:
+        lowered = combined_error.lower()
+        guidance = [
+            "The previous tool call failed:",
+            combined_error or "- unknown error",
+            "",
+            "Self-heal before retrying. Do not repeat the same failing action blindly.",
+        ]
+
+        if repeat_count > 1:
+            guidance.append(
+                f"This same failure pattern has happened {repeat_count} times. Change strategy now: inspect state with a different safe command, use a different path/model/approach, or stop with a precise blocker if recovery is impossible."
+            )
+
+        if "repeated identical tool call blocked" in lowered:
+            guidance.append("A repeated call was blocked. Use a distinct verification command, inspect a different file/path, or provide the final answer if the task is already complete.")
+        if any(marker in lowered for marker in ("path not found", "file not found", "no such file or directory")):
+            guidance.append("A path is missing. Run list_dir on the nearest existing parent, verify the workspace, create only requested missing directories/files, and use absolute paths when ambiguity exists.")
+        if "permission denied" in lowered:
+            guidance.append("A permission error occurred. Check ownership/permissions with a read-only command and avoid destructive chmod unless the user explicitly requested it.")
+        if "command timed out" in lowered:
+            guidance.append("The command timed out. If starting a server, launch it in the background with logs/pid and verify separately. Otherwise reduce scope or increase timeout once.")
+        if "403" in lowered and ("wikipedia" in lowered or "client error" in lowered or "forbidden" in lowered):
+            guidance.append("HTTP 403 during scraping usually needs realistic request headers: User-Agent, Accept, and Accept-Language. Update the script and rerun.")
+        if "404" in lowered and ("model" in lowered or "gemini" in lowered or "nvidia" in lowered):
+            guidance.append("A model was not found. List available models with the configured key and choose one supporting the needed method instead of guessing an old model ID.")
+        if "410" in lowered or "gone" in lowered or "end of life" in lowered:
+            guidance.append("The selected model/resource is gone or EOL. Refresh the live catalog and switch to an available fallback model.")
+        if "syntaxerror" in lowered or "error ts" in lowered:
+            guidance.append("A syntax/compiler error occurred. Read the exact file around the reported line, patch the smallest valid change, then rerun the same check.")
+        if "traceback" in lowered:
+            guidance.append("For Python tracebacks, debug the final exception line first; warnings above it are usually not the root cause.")
+        if "placeholder" in lowered or ".env secret" in lowered:
+            guidance.append("Never replace a real .env secret with a placeholder. Trust the user's existing key and run verification without editing secrets.")
+        if "rate limit" in lowered or "too many requests" in lowered or "429" in lowered:
+            guidance.append("A rate limit occurred. Stop retrying immediately; report the limit and suggest waiting or switching to a smaller/free model.")
+
+        guidance.append(
+            "General retry rules: use valid structured tool arguments; for source-code changes, read_file first, then write_file with complete corrected content; do not use shell heredocs/echo/cat/redirection to create source files; for git, use the repo root or `cd repo && git ...`; if the task is already complete, stop tools and answer normally."
+        )
+        return "\n".join(guidance)
+
     def _is_completion_action_tool(self, call: ToolCall) -> bool:
         if call.name == "bash":
             command = str(call.arguments.get("command", ""))
@@ -598,7 +660,7 @@ class Agent:
         return bool(re.search(r"(^|[;&|]\s*)git\s+", command))
 
     def _is_safe_repeated_tool_call(self, call: ToolCall) -> bool:
-        if call.name in {"list_dir", "read_file", "grep_search", "glob_files", "github_read_file", "github_list_dir", "github_search_code"}:
+        if call.name in {"list_dir", "read_file", "grep_search", "glob_files", "github_read_file", "github_list_dir", "github_search_code", "tavily_search"}:
             return True
         return self._is_idempotent_process_tool_call(call)
 

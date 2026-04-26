@@ -1,7 +1,7 @@
 """Tool registry - maps tool schemas to implementation functions."""
 from typing import Any, Callable
 
-from .implementations import bash, edit_file, glob_files, grep_search, list_dir, read_file, write_file
+from .implementations import bash, edit_file, glob_files, grep_search, list_dir, read_file, tavily_search, write_file
 from .git_tools import (
     git_add,
     git_branch,
@@ -270,6 +270,25 @@ def get_default_registry() -> ToolRegistry:
             },
         },
         github_search_code,
+        readonly=True,
+    )
+
+    reg.register(
+        {
+            "name": "tavily_search",
+            "description": "Search the live web using Tavily. Use only when the user requested or approved web access for current/latest/external information.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Web search query"},
+                    "max_results": {"type": "integer", "description": "Number of results, 1-10 (default 5)"},
+                    "search_depth": {"type": "string", "description": "basic or advanced"},
+                    "include_answer": {"type": "boolean", "description": "Whether Tavily should include a synthesized answer"},
+                },
+                "required": ["query"],
+            },
+        },
+        tavily_search,
         readonly=True,
     )
 
