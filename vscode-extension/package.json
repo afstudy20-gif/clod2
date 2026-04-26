@@ -1,0 +1,71 @@
+{
+  "name": "clod-agent",
+  "displayName": "Clod Agent",
+  "description": "Native VSCode agent panel for the Clod local coding assistant.",
+  "version": "0.1.0",
+  "publisher": "local",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onCommand:clod.openChat",
+    "onCommand:clod.sendSelection",
+    "onCommand:clod.startBackend"
+  ],
+  "main": "./src/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "clod.openChat",
+        "title": "Clod: Open Chat"
+      },
+      {
+        "command": "clod.sendSelection",
+        "title": "Clod: Send Selection"
+      },
+      {
+        "command": "clod.startBackend",
+        "title": "Clod: Start Backend"
+      }
+    ],
+    "configuration": {
+      "title": "Clod Agent",
+      "properties": {
+        "clod.serverUrl": {
+          "type": "string",
+          "default": "http://127.0.0.1:8000",
+          "description": "URL of the local Clod FastAPI backend."
+        },
+        "clod.backendPath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to the Clod backend repository. Empty means the parent folder of this extension."
+        },
+        "clod.pythonPath": {
+          "type": "string",
+          "default": "python3",
+          "description": "Python executable used to start uvicorn."
+        },
+        "clod.defaultProvider": {
+          "type": "string",
+          "default": "nvidia",
+          "description": "Default provider sent to the Clod backend."
+        },
+        "clod.defaultModel": {
+          "type": "string",
+          "default": "nvidia/nemotron-3-super-120b-a12b",
+          "description": "Default model sent to the Clod backend."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "check": "node --check src/extension.js"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.90.0"
+  }
+}

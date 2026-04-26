@@ -151,6 +151,26 @@
   .settings-btn:hover { background: var(--bg3); color: var(--text); border-color: var(--accent); }
   .settings-btn.primary { background: var(--accent); color: #000; border-color: var(--accent); font-weight: 600; }
   .settings-btn.primary:hover { background: var(--accent2); }
+  .quick-tools { margin-top: 8px; }
+  .quick-tool-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .tool-btn {
+    padding: 6px 8px;
+    background: var(--bg4);
+    border: 1px solid var(--border2);
+    border-radius: var(--radius);
+    color: var(--text2);
+    font-family: var(--mono);
+    font-size: 11px;
+    cursor: pointer;
+    text-align: center;
+    white-space: nowrap;
+  }
+  .tool-btn:hover { background: var(--bg3); color: var(--text); border-color: var(--accent); }
+  .tool-btn.primary { background: var(--accent); color: #000; border-color: var(--accent); font-weight: 700; }
 
   /* Main area */
   #main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
@@ -723,6 +743,13 @@
 
   .message-images { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
   .message-images img { max-width: 300px; max-height: 300px; border-radius: 6px; border: 1px solid var(--border); }
+  #paste-status {
+    color: var(--text3);
+    font-size: 11px;
+    min-height: 14px;
+  }
+  #paste-status.warning { color: var(--yellow); }
+  #paste-status.success { color: var(--green); }
 </style>
 </head>
 <body>
@@ -779,15 +806,6 @@
       <div id="model-update-result"></div>
       <div id="push-result"></div>
 
-      <div class="quick-tools">
-        <div class="field-label">Quick Tools</div>
-        <div class="quick-tool-grid">
-          <button class="tool-btn" onclick="manualRead()">Read File</button>
-          <button class="tool-btn" onclick="manualWrite()">Write File</button>
-          <button class="tool-btn" onclick="manualBash()">Run Bash</button>
-          <button class="tool-btn" onclick="manualList()">List Dir</button>
-        </div>
-      </div>
     </div>
   </div>
 
@@ -837,11 +855,12 @@
     <div id="input-area">
       <div id="input-wrapper">
         <div id="attachment-preview"></div>
-        <textarea id="user-input" rows="1" placeholder="Message Clod..." onkeydown="handleKey(event)" oninput="autoResize(this)"></textarea>
+        <textarea id="user-input" rows="1" placeholder="Message Clod... paste a screenshot here" onkeydown="handleKey(event)" oninput="autoResize(this)" onpaste="handleInputPaste(event)" ondrop="handleInputDrop(event)" ondragover="event.preventDefault()"></textarea>
         <div id="input-footer">
           <div id="input-hints">
             <span><span class="hint-key">Enter</span> send</span>
             <span><span class="hint-key">Shift+Enter</span> newline</span>
+            <span><span class="hint-key">Paste</span> screenshot</span>
           </div>
           <div style="display:flex;gap:6px;align-items:center;">
             <input id="image-input" type="file" accept="image/*" multiple style="display:none" onchange="handleImageFiles(this.files)">
@@ -849,6 +868,19 @@
             <button id="send-btn" onclick="sendMessage()">Send</button>
             <button id="stop-btn" onclick="stopGeneration()" style="display:none;background:var(--red);color:white;border:none;">Stop</button>
           </div>
+        </div>
+        <div id="paste-status"></div>
+      </div>
+      <div class="quick-tools composer-tools">
+        <div class="quick-tool-grid">
+          <button class="tool-btn" onclick="manualRead()">Read File</button>
+          <button class="tool-btn" onclick="manualWrite()">Write File</button>
+          <button class="tool-btn" onclick="manualBash()">Run Bash</button>
+          <button class="tool-btn" onclick="manualList()">List Dir</button>
+          <button class="tool-btn" onclick="createDevServer()">Create Dev Server</button>
+          <button class="tool-btn" onclick="addPwa()">Add PWA</button>
+          <button class="tool-btn" onclick="applyClodImprovements()">Apply Improvements</button>
+          <button class="tool-btn primary" onclick="pushToGithub()">Push GitHub</button>
         </div>
       </div>
     </div>
@@ -943,6 +975,7 @@ async function init() {
         providerCapabilities[key] = {
           supportsTools: info.supports_tools !== false,
           supportsImages: info.supports_images === true,
+          visionModels: Array.isArray(info.vision_models) ? info.vision_models : [],
         };
         if (info.name) PROVIDER_NAMES[key] = info.name;
       }
@@ -1070,10 +1103,11 @@ function onProviderChange() {
   const ms = document.getElementById('model-select');
   const topbarBtn = document.getElementById('topbar-update-models-btn');
   const topbarResult = document.getElementById('topbar-model-update-result');
-  ms.innerHTML = (MODELS[p] || []).map(m => `<option value="${m}">${m}</option>`).join('');
+  ms.innerHTML = (MODELS[p] || []).map(m => `<option value="${m}">${formatModelLabel(p, m)}</option>`).join('');
   localStorage.setItem('cclaude_provider', p);
   if (topbarBtn) topbarBtn.textContent = 'Update Models';
   if (topbarResult) topbarResult.textContent = '';
+  if (pendingImages.length) updatePasteStatus(`${pendingImages.length} image${pendingImages.length === 1 ? '' : 's'} attached.`);
   updateTopbar();
 }
 
@@ -1090,6 +1124,7 @@ async function pushToGithub() {
   const result = document.getElementById('push-result');
   result.className = '';
   result.textContent = 'Pushing...';
+  appendQuickToolResult('git push', 'start', 'Pushing current branch to GitHub...');
   try {
     const resp = await fetch('/git/push', {
       method: 'POST',
@@ -1102,13 +1137,16 @@ async function pushToGithub() {
     if (!resp.ok) {
       result.className = 'error';
       result.textContent = data.detail || 'Push failed';
+      appendQuickToolResult('git push', 'error', result.textContent);
       return;
     }
     result.className = data.ok ? 'success' : 'error';
     result.textContent = data.output || 'Push complete';
+    appendQuickToolResult('git push', data.ok ? 'result' : 'error', result.textContent);
   } catch (e) {
     result.className = 'error';
     result.textContent = e.message;
+    appendQuickToolResult('git push', 'error', e.message);
   }
 }
 
@@ -1145,7 +1183,7 @@ function updateTopbar() {
   if (providerCapabilities[p]?.supportsTools === false) {
     keyEl.textContent += ' · No tools';
   }
-  if (pendingImages.length && providerCapabilities[p]?.supportsImages !== true) {
+  if (pendingImages.length && !selectedModelSupportsImages()) {
     keyEl.textContent += ' · No vision';
   }
   updateTokenMonitor();
@@ -1303,8 +1341,88 @@ async function handleImageFiles(files) {
   }
   document.getElementById('image-input').value = '';
   renderAttachmentPreview();
+  updatePasteStatus(selected.length ? `Attached ${selected.length} image${selected.length === 1 ? '' : 's'}.` : '');
   updateTopbar();
   updateTokenMonitor();
+}
+
+async function handleInputPaste(event) {
+  const files = [];
+  const items = Array.from(event.clipboardData?.items || []);
+  for (const item of items) {
+    if (item.kind === 'file' && item.type.startsWith('image/')) {
+      const file = item.getAsFile();
+      if (file) files.push(file);
+    }
+  }
+  if (!files.length) return;
+  event.preventDefault();
+  await handleImageFiles(files.map((file, index) => renameClipboardImage(file, index)));
+  ensureScreenshotDebugPrompt();
+}
+
+async function handleInputDrop(event) {
+  event.preventDefault();
+  const files = Array.from(event.dataTransfer?.files || []).filter(file => file.type.startsWith('image/'));
+  if (!files.length) return;
+  await handleImageFiles(files);
+  ensureScreenshotDebugPrompt();
+}
+
+function renameClipboardImage(file, index) {
+  const ext = (file.type.split('/')[1] || 'png').replace('jpeg', 'jpg');
+  return new File([file], `pasted-screenshot-${Date.now()}-${index + 1}.${ext}`, { type: file.type });
+}
+
+function ensureScreenshotDebugPrompt() {
+  const input = document.getElementById('user-input');
+  if (!input.value.trim()) {
+    input.value = 'Analyze this screenshot and fix the issue.';
+    autoResize(input);
+  }
+}
+
+function updatePasteStatus(message = '') {
+  const el = document.getElementById('paste-status');
+  if (!el) return;
+  if (!message) {
+    el.textContent = '';
+    el.className = '';
+    return;
+  }
+  const p = document.getElementById('provider-select')?.value;
+  const supportsImages = selectedModelSupportsImages();
+  el.textContent = supportsImages
+    ? message
+    : `${message} Selected provider may not inspect images; choose a vision-capable model/provider.`;
+  el.className = supportsImages ? 'success' : 'warning';
+}
+
+function selectedModelSupportsImages() {
+  const p = document.getElementById('provider-select')?.value;
+  const m = document.getElementById('model-select')?.value || '';
+  const visionModels = providerCapabilities[p]?.visionModels || [];
+  if (visionModels.length) return visionModels.includes(m);
+  if (providerCapabilities[p]?.supportsImages !== true) return false;
+  return true;
+}
+
+function modelCapabilityTags(provider, model) {
+  const caps = providerCapabilities[provider] || {};
+  const tags = [];
+  const visionModels = caps.visionModels || [];
+  if (visionModels.length) {
+    tags.push(visionModels.includes(model) ? 'vision' : 'no vision');
+  } else {
+    tags.push(caps.supportsImages ? 'vision' : 'no vision');
+  }
+  if (caps.supportsTools !== false) tags.push('tools');
+  return tags;
+}
+
+function formatModelLabel(provider, model) {
+  const tags = modelCapabilityTags(provider, model);
+  return `${model} (${tags.join(', ')})`;
 }
 
 function readFileAsDataUrl(file) {
@@ -1336,6 +1454,7 @@ function renderAttachmentPreview() {
 function removePendingImage(index) {
   pendingImages.splice(index, 1);
   renderAttachmentPreview();
+  updatePasteStatus(pendingImages.length ? `${pendingImages.length} image${pendingImages.length === 1 ? '' : 's'} attached.` : '');
   updateTopbar();
   updateTokenMonitor();
 }
@@ -1406,6 +1525,11 @@ async function sendMessage() {
   const input = document.getElementById('user-input');
   const text = input.value.trim();
   if (!text && !pendingImages.length) return;
+  if (text.startsWith('/improve')) {
+    input.value = text.replace('/improve', '').trim();
+    applyClodImprovements();
+    return;
+  }
 
   if (!currentChatId) newChat();
   const welcomeEl = document.getElementById('welcome');
@@ -1419,6 +1543,7 @@ async function sendMessage() {
   const content = buildMessageContent(text, images);
   pendingImages = [];
   renderAttachmentPreview();
+  updatePasteStatus('');
   updateTopbar();
   chat.messages.push({ role: 'user', content });
   if (chat.title === 'New chat') chat.title = text.slice(0, 40);
@@ -1468,8 +1593,20 @@ async function streamAssistant(chat) {
 
   let fullText = '';
   let toolEvents = [];
+  let streamStarted = false;
+  let idleTimer = null;
+
+  const resetIdleTimer = () => {
+    if (idleTimer) clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => {
+      if (isStreaming && abortController) {
+        abortController.abort();
+      }
+    }, streamStarted ? 60000 : 30000);
+  };
 
   try {
+    resetIdleTimer();
     const payload = {
       messages: chat.messages,
       provider,
@@ -1510,6 +1647,8 @@ async function streamAssistant(chat) {
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
+      streamStarted = true;
+      resetIdleTimer();
       buf += decoder.decode(value, { stream: true });
       const lines = buf.split('\n');
       buf = lines.pop();
@@ -1520,16 +1659,22 @@ async function streamAssistant(chat) {
         try {
           const ev = JSON.parse(raw);
           if (ev.text) {
+            streamStarted = true;
+            resetIdleTimer();
             fullText += ev.text;
             streamingAssistantText = fullText;
             updateTokenMonitor();
             renderAssistantBody(body, fullText, toolEvents, true);
             scrollBottom();
           } else if (ev.tool_event) {
+            streamStarted = true;
+            resetIdleTimer();
             toolEvents.push(ev.tool_event);
             renderAssistantBody(body, fullText, toolEvents, true);
             scrollBottom();
           } else if (ev.error) {
+            streamStarted = true;
+            resetIdleTimer();
             fullText += `\n\n**Error:** ${ev.error}`;
             renderAssistantBody(body, fullText, toolEvents, false);
           }
@@ -1537,8 +1682,13 @@ async function streamAssistant(chat) {
       }
     }
   } catch (err) {
-    fullText += `\n\nNetwork error: ${err.message}`;
+    const timedOut = err.name === 'AbortError';
+    fullText += timedOut
+      ? '\n\nError: Model did not start responding in time. The request was stopped so the chat does not stay stuck. Try again, use a smaller model, or run a direct Quick Tool command.'
+      : `\n\nNetwork error: ${err.message}`;
     renderAssistantBody(body, fullText, toolEvents, false);
+  } finally {
+    if (idleTimer) clearTimeout(idleTimer);
   }
 
   const cursor = body.querySelector('.cursor');
@@ -1962,6 +2112,7 @@ document.addEventListener('click', (e) => {
 // Manual Tools
 async function runTool(tool, args) {
   const ws = document.getElementById('workspace-input').value.trim() || null;
+  appendQuickToolResult(tool, 'start', formatToolArgsForDisplay(args));
   try {
     const resp = await fetch('/tools/run', {
       method: 'POST',
@@ -1970,35 +2121,169 @@ async function runTool(tool, args) {
     });
     const data = await resp.json();
     if (data.ok) {
-      alert(data.result);
+      appendQuickToolResult(tool, 'result', data.result || '(no output)');
     } else {
-      alert('Tool failed: ' + data.error);
+      appendQuickToolResult(tool, 'error', data.error || 'Tool failed');
     }
   } catch (e) {
-    alert('Error: ' + e.message);
+    appendQuickToolResult(tool, 'error', e.message);
   }
 }
 
+function appendQuickToolResult(name, type, output) {
+  const msgs = document.getElementById('messages');
+  const welcomeEl = document.getElementById('welcome');
+  if (welcomeEl) welcomeEl.remove();
+  const row = document.createElement('div');
+  row.className = 'msg-row';
+  const block = document.createElement('div');
+  block.className = 'tool-block';
+  const uid = 'quick-tool-' + Date.now() + Math.random().toString(36).slice(2);
+  block.innerHTML = `
+    <div class="tool-header" onclick="toggleTool('${uid}')">
+      <span class="tool-icon">$</span>
+      <span class="tool-name">${escHtml(name)}</span>
+      <span class="tool-args-summary">${escHtml(type)}</span>
+      <span class="tool-chevron open" id="chev-${uid}">&#9654;</span>
+    </div>
+    <div class="tool-body open" id="${uid}">
+      <div class="tool-result">${escHtml(output || '(no output)')}</div>
+    </div>`;
+  row.appendChild(block);
+  msgs.appendChild(row);
+  scrollBottom();
+}
+
+function formatToolArgsForDisplay(args) {
+  if (!args || !Object.keys(args).length) return '(no arguments)';
+  if (args.command) return `$ ${args.command}`;
+  if (args.path && args.content !== undefined) return `${args.path}\n\n${args.content}`;
+  if (args.path) return args.path;
+  return JSON.stringify(args, null, 2);
+}
+
 function manualRead() {
-  const path = prompt('Enter relative path to read:');
+  const path = consumeComposerText() || prompt('Enter relative path to read:');
   if (path) runTool('read_file', { path });
 }
 
 function manualWrite() {
-  const path = prompt('Enter relative path to write:');
+  const typed = consumeComposerText();
+  const parsed = parsePathAndContent(typed);
+  const path = parsed.path || prompt('Enter relative path to write:');
   if (!path) return;
-  const content = prompt('Enter file content (or leave empty to create empty file):');
+  const content = parsed.hasContent ? parsed.content : prompt('Enter file content (or leave empty to create empty file):');
   runTool('write_file', { path, content: content || '' });
 }
 
 function manualBash() {
-  const command = prompt('Enter bash command:');
+  const typed = consumeComposerText();
+  const command = typed || prompt('Enter bash command:');
   if (command) runTool('bash', { command });
 }
 
 function manualList() {
-  const path = prompt('Enter relative path to list (default is .):', '.');
+  const path = consumeComposerText() || prompt('Enter relative path to list (default is .):', '.');
   if (path !== null) runTool('list_dir', { path });
+}
+
+function consumeComposerText() {
+  const input = document.getElementById('user-input');
+  const typed = input.value.trim();
+  if (!typed) return '';
+  input.value = '';
+  input.style.height = 'auto';
+  updateTokenMonitor();
+  return typed;
+}
+
+function parsePathAndContent(text) {
+  if (!text) return { path: '', content: '', hasContent: false };
+  const lines = text.split('\n');
+  const first = lines[0].trim();
+  const pathMatch = first.match(/^(?:path|file)\s*:\s*(.+)$/i);
+  const path = pathMatch ? pathMatch[1].trim() : first;
+  if (lines.length <= 1) return { path, content: '', hasContent: false };
+  return { path, content: lines.slice(1).join('\n').replace(/^\n/, ''), hasContent: true };
+}
+
+function createDevServer() {
+  const input = document.getElementById('user-input');
+  const typed = input.value.trim();
+  const workspace = document.getElementById('workspace-input').value.trim() || 'the selected workspace';
+  const request = typed || 'Create or detect the app dev server, start it in the background, and verify it responds.';
+  input.value = [
+    request,
+    '',
+    `Workspace: ${workspace}`,
+    '',
+    'Create or start the development server for this project.',
+    'If dependencies are missing, install only what is necessary.',
+    'Start the server in the background without blocking the tool.',
+    'Write a pid/log file if useful.',
+    'Verify the server with curl or an equivalent HTTP check.',
+    'Report the local URL and do not stop the server.'
+  ].join('\n');
+  autoResize(input);
+  document.getElementById('mode-select').value = 'build_debug';
+  onModeChange();
+  sendMessage();
+}
+
+function addPwa() {
+  const input = document.getElementById('user-input');
+  const typed = input.value.trim();
+  const workspace = document.getElementById('workspace-input').value.trim() || 'the selected workspace';
+  const request = typed || 'Add PWA support to this app.';
+  input.value = [
+    request,
+    '',
+    `Workspace: ${workspace}`,
+    '',
+    'Add Progressive Web App support:',
+    '- create or update manifest.webmanifest',
+    '- create or update a service worker',
+    '- register the service worker from the app entrypoint',
+    '- add manifest and theme-color links to the HTML/app shell',
+    '- include installable app name, icons, start_url, display, background_color, and theme_color',
+    '- avoid breaking existing app behavior',
+    '- run a quick syntax/build check if available',
+    '- report changed files and verification results'
+  ].join('\n');
+  autoResize(input);
+  document.getElementById('mode-select').value = 'build_debug';
+  onModeChange();
+  sendMessage();
+}
+
+function applyClodImprovements() {
+  const input = document.getElementById('user-input');
+  const typed = input.value.trim();
+  const workspace = document.getElementById('workspace-input').value.trim() || 'the selected workspace';
+  const request = typed || 'Bu projeye Clod uygulamasında geliştirdiğimiz ajan/araç iyileştirmelerini uygun şekilde ekle.';
+  input.value = [
+    request,
+    '',
+    `Workspace: ${workspace}`,
+    '',
+    'Bu projeyi incele ve Clod üzerinde geliştirdiğimiz faydalı özelliklerden projeye uygun olanları uygula:',
+    '- chat/input alanına resim yapıştırma veya dosya ekleme desteği gerekiyorsa ekle',
+    '- tool/komut çıktılarının kalıcı ve okunabilir görünmesini sağla',
+    '- tekrar eden aynı komutları azalt veya engelle',
+    '- dev server başlatma/doğrulama akışını güvenli hale getir',
+    '- background process başlatırken timeout yaratmayacak yöntem kullan',
+    '- Windows/Linux/macOS uyumluluğunu gözet',
+    '- PWA desteği gerekiyorsa manifest/service worker/register ekle',
+    '- GitHub push veya git workflow butonu/komutu gerekiyorsa ekle',
+    '- mevcut UI/UX stilini bozma, küçük ve hedefli değişiklikler yap',
+    '- değişen dosyaları ve doğrulama komutlarını finalde raporla',
+    '',
+    'Önce projeyi keşfet, sonra sadece uygulanabilir iyileştirmeleri yap. Gereksiz dosya oluşturma.'
+  ].join('\n');
+  autoResize(input);
+  document.getElementById('mode-select').value = 'build_debug';
+  onModeChange();
+  sendMessage();
 }
 
 // Boot

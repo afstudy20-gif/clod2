@@ -251,10 +251,18 @@ class NvidiaProvider(OpenAICompatibleProvider):
     name = "NVIDIA NIM"
     BASE_URL = "https://integrate.api.nvidia.com/v1"
     SUPPORTS_TOOLS = True
-    SUPPORTS_IMAGES = True
+    SUPPORTS_IMAGES = False
+    VISION_MODELS = {
+        "microsoft/phi-4-multimodal-instruct",
+        "microsoft/phi-3-vision-128k-instruct",
+        "nvidia/neva-22b",
+    }
     MAX_TOKENS = 8192
 
     DEFAULT_MODELS = {
+        "microsoft/phi-4-multimodal-instruct": "microsoft/phi-4-multimodal-instruct",
+        "microsoft/phi-3-vision-128k-instruct": "microsoft/phi-3-vision-128k-instruct",
+        "nvidia/neva-22b": "nvidia/neva-22b",
         "qwen/qwen3-coder-480b-a35b-instruct": "qwen/qwen3-coder-480b-a35b-instruct",
         "moonshotai/kimi-k2-instruct-0905": "moonshotai/kimi-k2-instruct-0905",
         "nvidia/nemotron-3-super-120b-a12b": "nvidia/nemotron-3-super-120b-a12b",

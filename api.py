@@ -116,7 +116,7 @@ def chat(req: ChatRequest):
             print(f"Warning: could not load session {req.session_id}: {e}")
 
     try:
-        supports_images = getattr(provider, "SUPPORTS_IMAGES", False)
+        supports_images = _model_supports_images(provider, model)
         internal_messages = session_messages + [
             InternalMessage(role=m.role, content=_prepare_message_content(m.content, supports_images))
             for m in req.messages
@@ -229,6 +229,13 @@ def _prepare_message_content(content: str | list[dict], supports_images: bool):
     if images:
         text += f"\n\n[Attached {len(images)} image(s), but the selected provider cannot inspect images.]"
     return text.strip()
+
+
+def _model_supports_images(provider, model: str | None) -> bool:
+    vision_models = getattr(provider, "VISION_MODELS", None)
+    if vision_models is not None:
+        return bool(model and model in vision_models)
+    return getattr(provider, "SUPPORTS_IMAGES", False)
 
 
 class PushRequest(BaseModel):
@@ -531,6 +538,7 @@ def list_providers():
             "models": models,
             "supports_tools": getattr(cls, "SUPPORTS_TOOLS", True),
             "supports_images": getattr(cls, "SUPPORTS_IMAGES", False),
+            "vision_models": sorted(getattr(cls, "VISION_MODELS", [])),
         }
     return result
 

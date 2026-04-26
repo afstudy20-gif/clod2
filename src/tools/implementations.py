@@ -1,6 +1,7 @@
 """Tool implementations - filesystem, shell, and search operations."""
 import fnmatch
 import os
+import platform
 import re
 import subprocess
 from pathlib import Path
@@ -79,6 +80,8 @@ def bash(command: str, timeout: int = 30) -> str:
     if timeout > 120:
         timeout = 120
     command = _normalize_shell_command(command)
+    if _should_detach_background_command(command):
+        return _run_detached_background_command(command)
     try:
         result = subprocess.run(
             command,
@@ -87,6 +90,7 @@ def bash(command: str, timeout: int = 30) -> str:
             text=True,
             timeout=timeout,
             cwd=_project_root,
+            stdin=subprocess.DEVNULL,
         )
         output = ""
         if result.stdout:
@@ -97,6 +101,9 @@ def bash(command: str, timeout: int = 30) -> str:
             recovered = _recover_git_checkout_existing_branch(command, result.stderr, timeout)
             if recovered is not None:
                 return recovered
+        if result.returncode != 0 and _is_nonfatal_process_probe(command, output):
+            output = output.strip()
+            return output or "No matching process or listening port found."
         if result.returncode != 0:
             output += f"\n[Exit code: {result.returncode}]"
         output = output.strip() or "(no output)"
@@ -109,15 +116,139 @@ def bash(command: str, timeout: int = 30) -> str:
         return f"Error: {e}"
 
 
+def _should_detach_background_command(command: str) -> bool:
+    lowered = command.lower()
+    if "&" not in command:
+        return False
+    background_markers = (
+        "nohup ",
+        "python",
+        "uvicorn",
+        "flask",
+        "npm run",
+        "vite",
+        "server.py",
+    )
+    return any(marker in lowered for marker in background_markers)
+
+
+def _run_detached_background_command(command: str) -> str:
+    try:
+        subprocess.Popen(
+            command,
+            shell=True,
+            cwd=_project_root,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        return (
+            "Started background command without waiting for it to exit. "
+            "Use a separate verification command such as `sleep 1 && curl ...`, "
+            "`ps`, or `cat server.log` to confirm it is running."
+        )
+    except Exception as e:
+        return f"Error: failed to start background command: {e}"
+
+
 def _normalize_shell_command(command: str) -> str:
     """Normalize common copied Unicode punctuation that breaks shell/git commands."""
-    return (
+    normalized = (
         command
         .replace("\u2014-", "--")
         .replace("\u2013-", "--")
         .replace("\u2014", "--")
         .replace("\u2013", "--")
     )
+    normalized = _normalize_process_command_for_platform(normalized)
+    return normalized
+
+
+def _normalize_process_command_for_platform(command: str) -> str:
+    if _is_windows_host():
+        return _normalize_windows_process_command(command)
+    return _normalize_posix_process_command(command)
+
+
+def _normalize_posix_process_command(command: str) -> str:
+    normalized = command
+    normalized = re.sub(r"\blsof\s+-ti:(\d+)\b", r"lsof -ti tcp:\1", normalized)
+    normalized = re.sub(
+        r"\bfuser\s+-k\s+(\d+)/tcp\b\s*(?:2>/dev/null)?\s*(?:\|\|\s*true)?",
+        r"lsof -ti tcp:\1 | xargs kill -9 2>/dev/null || true",
+        normalized,
+    )
+    normalized = re.sub(
+        r"\bss\s+-tlnp\s*\|\s*grep\s+:?(\d+)\b",
+        r"lsof -nP -iTCP:\1 -sTCP:LISTEN",
+        normalized,
+    )
+    normalized = re.sub(
+        r"\bnetstat\s+-tlnp(?:\s+2>/dev/null)?\s*\|\s*grep\s+:?(\d+)\b",
+        r"lsof -nP -iTCP:\1 -sTCP:LISTEN",
+        normalized,
+    )
+    return normalized
+
+
+def _normalize_windows_process_command(command: str) -> str:
+    port = _extract_port_from_process_command(command)
+    if port is None:
+        return command
+
+    lowered = command.lower()
+    wants_kill = (
+        "fuser" in lowered
+        or "xargs kill" in lowered
+        or lowered.startswith("pkill ")
+        or " pkill " in lowered
+        or "kill -9" in lowered
+    )
+    if wants_kill:
+        return (
+            "powershell -NoProfile -ExecutionPolicy Bypass -Command "
+            f"\"Get-NetTCPConnection -LocalPort {port} -ErrorAction SilentlyContinue | "
+            "ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }\""
+        )
+    if any(marker in lowered for marker in ("lsof", "fuser", "ss ", "netstat")):
+        return (
+            "powershell -NoProfile -ExecutionPolicy Bypass -Command "
+            f"\"Get-NetTCPConnection -LocalPort {port} -ErrorAction SilentlyContinue | "
+            "Select-Object LocalAddress,LocalPort,State,OwningProcess\""
+        )
+    return command
+
+
+def _extract_port_from_process_command(command: str) -> str | None:
+    patterns = (
+        r"tcp:(\d+)",
+        r":(\d+)",
+        r"\b(\d+)/tcp\b",
+        r"localport\s+(\d+)",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, command, flags=re.IGNORECASE)
+        if match:
+            return match.group(1)
+    return None
+
+
+def _is_windows_host() -> bool:
+    return platform.system().lower().startswith("win")
+
+
+def _is_nonfatal_process_probe(command: str, output: str) -> bool:
+    lowered = command.lower()
+    if "|| true" in lowered:
+        return True
+    if lowered.startswith("pkill ") or " pkill " in lowered:
+        return True
+    if "get-nettcpconnection" in lowered or "stop-process" in lowered:
+        return True
+    if ("lsof " in lowered or "grep" in lowered) and not output.strip():
+        return True
+    return False
 
 
 def _recover_git_checkout_existing_branch(command: str, stderr: str, timeout: int) -> str | None:

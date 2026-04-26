@@ -1,4 +1,5 @@
 import ast
+import json
 import re
 from json import JSONDecoder
 from pathlib import Path
@@ -81,7 +82,9 @@ CRITICAL: You MUST use the tools (write_file, edit_file, bash) immediately.
 - JUST OUTPUT THE JSON TOOL CALL.
 - For file contents, ALWAYS use write_file with a JSON string content value.
 - Do NOT use bash, echo, printf, cat, heredocs, or shell redirection to create HTML, CSS, JavaScript, JSON, Python, or other source files.
-- Use bash only for simple commands like mkdir, npm install, or running tests. Use git_init for repository initialization.
+- Use bash only for simple commands like mkdir, npm install, or running tests.
+- Do NOT run git commands or git tools unless the user explicitly asks for git, commit, branch, push, pull, or repository initialization.
+- The host can be macOS, Linux, or Windows. Prefer portable commands. For port checks/cleanup, prefer `lsof -ti tcp:PORT` on macOS/Linux and PowerShell `Get-NetTCPConnection` on Windows; unsupported Linux-only commands may be normalized by the tool layer.
 - If a branch may already exist, use `git checkout branch` or `git switch branch` instead of `git checkout -b branch`.
 - For debugging tasks, inspect files, reproduce or verify the issue with bash when possible, then fix it with write_file or edit_file when a code change is needed.
 - For remote git tasks, report the exact terminal output of git commands and never claim a push succeeded if the command returned an error.
@@ -190,12 +193,14 @@ class Agent:
             self.mode = "chat"
 
         self.history.append(Message(role="user", content=user_message))
+        git_allowed = self._user_allows_git(user_message)
 
         system_prompt = self._get_system_prompt()
         tool_schemas = self._get_tool_schemas()
         completed_action_tool_seen = False
         file_mutation_tool_seen = False
         last_tool_error = ""
+        recent_tool_call_keys: dict[tuple[str, str], int] = {}
 
         exhausted_rounds = True
         for _ in range(self.max_tool_rounds):
@@ -292,6 +297,72 @@ class Agent:
                         )
                     )
                     continue
+                if self.mode in ("build", "debug") and self._is_noop_tool_call(tc):
+                    result = (
+                        f"Error: Do not use {tc.name} for status-only messages. "
+                        "If the task is complete, answer in normal final text instead of running "
+                        "echo/printf or another no-op command."
+                    )
+                    last_tool_error = f"{tc.name}: {result[:2000]}"
+                    yield ToolEvent(
+                        type="result",
+                        tool_name=tc.name,
+                        arguments=tc.arguments,
+                        result=result,
+                        is_error=True,
+                    )
+                    tool_results.append(
+                        ToolResult(
+                            tool_call_id=tc.id,
+                            content=result,
+                            is_error=True,
+                        )
+                    )
+                    continue
+                if self.mode in ("build", "debug") and self._is_git_tool_call(tc) and not git_allowed:
+                    result = (
+                        f"Error: Git tool call blocked because the user did not request git operations: {tc.name}. "
+                        "Do not initialize repositories, stage files, commit, branch, pull, or push unless the user explicitly asks. "
+                        "Continue with the requested non-git task or provide the final answer."
+                    )
+                    last_tool_error = f"{tc.name}: {result[:2000]}"
+                    yield ToolEvent(
+                        type="result",
+                        tool_name=tc.name,
+                        arguments=tc.arguments,
+                        result=result,
+                        is_error=True,
+                    )
+                    tool_results.append(
+                        ToolResult(
+                            tool_call_id=tc.id,
+                            content=result,
+                            is_error=True,
+                        )
+                    )
+                    continue
+                repeat_key = self._tool_call_key(tc)
+                recent_tool_call_keys[repeat_key] = recent_tool_call_keys.get(repeat_key, 0) + 1
+                if recent_tool_call_keys[repeat_key] > 1:
+                    is_safe_repeat = self._is_idempotent_process_tool_call(tc)
+                    result = self._repeated_tool_call_message(tc, is_safe_repeat)
+                    if not is_safe_repeat:
+                        last_tool_error = f"{tc.name}: {result[:2000]}"
+                    yield ToolEvent(
+                        type="result",
+                        tool_name=tc.name,
+                        arguments=tc.arguments,
+                        result=result,
+                        is_error=not is_safe_repeat,
+                    )
+                    tool_results.append(
+                        ToolResult(
+                            tool_call_id=tc.id,
+                            content=result,
+                            is_error=not is_safe_repeat,
+                        )
+                    )
+                    continue
                 executed_tool_names.append(tc.name)
                 yield ToolEvent(
                     type="start",
@@ -323,7 +394,7 @@ class Agent:
             )
             if tool_results and not any(tr.is_error for tr in tool_results):
                 completed_action_tool_seen = completed_action_tool_seen or any(
-                    self._is_completion_action_tool(name) for name in executed_tool_names
+                    self._is_completion_action_tool(tc) for tc in tool_calls_seen
                 )
                 file_mutation_tool_seen = file_mutation_tool_seen or any(
                     self._is_file_mutation_tool(name) for name in executed_tool_names
@@ -347,7 +418,9 @@ class Agent:
                             "For git commands, use paths relative to the actual git repository root, "
                             "or run `cd path/to/repo && git ...` inside the bash command. "
                             "If a branch already exists, switch to it with `git checkout branch` "
-                            "instead of creating it again with `git checkout -b branch`."
+                            "instead of creating it again with `git checkout -b branch`. "
+                            "If the requested work is already complete, stop calling tools and provide "
+                            "the final answer as normal assistant text."
                         ),
                     )
                 )
@@ -464,11 +537,13 @@ class Agent:
             "write/edit/bash/git action completed."
         )
 
-    def _is_completion_action_tool(self, tool_name: str) -> bool:
-        return tool_name in {
+    def _is_completion_action_tool(self, call: ToolCall) -> bool:
+        if call.name == "bash":
+            command = str(call.arguments.get("command", ""))
+            return not self._is_noop_bash_command(command)
+        return call.name in {
             "write_file",
             "edit_file",
-            "bash",
             "git_add",
             "git_init",
             "git_commit",
@@ -476,6 +551,91 @@ class Agent:
             "github_write_file",
             "github_delete_file",
         }
+
+    def _is_noop_bash_command(self, command: str) -> bool:
+        stripped = command.strip()
+        lowered = stripped.lower()
+        return (
+            lowered.startswith("echo ")
+            or lowered.startswith("printf ")
+            or "task completed" in lowered
+            or "project pushed to" in lowered
+        )
+
+    def _is_noop_tool_call(self, call: ToolCall) -> bool:
+        return call.name == "bash" and self._is_noop_bash_command(str(call.arguments.get("command", "")))
+
+    def _user_allows_git(self, user_message: str | list[Any]) -> bool:
+        if isinstance(user_message, list):
+            text = "\n".join(
+                str(part.get("text", ""))
+                for part in user_message
+                if isinstance(part, dict) and part.get("type") == "text"
+            )
+        else:
+            text = str(user_message)
+        lowered = text.lower()
+        return any(
+            marker in lowered
+            for marker in (
+                "git",
+                "commit",
+                "push",
+                "pull",
+                "branch",
+                "repo",
+                "repository",
+                "github",
+                "stage",
+                "staging",
+            )
+        )
+
+    def _is_git_tool_call(self, call: ToolCall) -> bool:
+        if call.name.startswith("git_") or call.name.startswith("github_"):
+            return True
+        if call.name != "bash":
+            return False
+        command = str(call.arguments.get("command", "")).lower()
+        return bool(re.search(r"(^|[;&|]\s*)git\s+", command))
+
+    def _is_idempotent_process_tool_call(self, call: ToolCall) -> bool:
+        if call.name != "bash":
+            return False
+        from ..tools.implementations import _normalize_shell_command
+        command = _normalize_shell_command(str(call.arguments.get("command", ""))).lower()
+        if any(marker in command for marker in ("lsof", "fuser", "ss ", "netstat", "get-nettcpconnection", "stop-process")):
+            return True
+        return (
+            "lsof" in command
+            and "xargs kill" in command
+            and ("|| true" in command or "2>/dev/null" in command)
+        )
+
+    def _repeated_tool_call_message(self, call: ToolCall, skipped: bool) -> str:
+        prefix = "Skipped repeated process check/cleanup command" if skipped else "Error: Repeated identical tool call blocked"
+        return (
+            f"{prefix}: {call.name} {json.dumps(call.arguments, ensure_ascii=False)}. "
+            "Do not repeat the same command. If the task is complete, respond with the final summary. "
+            "If it is not complete, run the next distinct verification or corrective command."
+        )
+
+    def _tool_call_key(self, call: ToolCall) -> tuple[str, str]:
+        if call.name == "bash" and isinstance(call.arguments, dict):
+            args = dict(call.arguments)
+            command = args.get("command")
+            if isinstance(command, str):
+                from ..tools.implementations import _normalize_shell_command
+                args["command"] = _normalize_shell_command(command)
+            try:
+                return call.name, json.dumps(args, sort_keys=True, ensure_ascii=False)
+            except TypeError:
+                return call.name, repr(args)
+        try:
+            args = json.dumps(call.arguments, sort_keys=True, ensure_ascii=False)
+        except TypeError:
+            args = repr(call.arguments)
+        return call.name, args
 
     def _is_file_mutation_tool(self, tool_name: str) -> bool:
         return tool_name in {
