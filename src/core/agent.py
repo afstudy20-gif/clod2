@@ -339,7 +339,7 @@ class Agent:
                 repeat_key = self._tool_call_key(tc)
                 recent_tool_call_keys[repeat_key] = recent_tool_call_keys.get(repeat_key, 0) + 1
                 if recent_tool_call_keys[repeat_key] > 1:
-                    is_safe_repeat = self._is_idempotent_process_tool_call(tc)
+                    is_safe_repeat = self._is_safe_repeated_tool_call(tc)
                     result = self._repeated_tool_call_message(tc, is_safe_repeat)
                     if not is_safe_repeat:
                         last_tool_error = f"{tc.name}: {result[:2000]}"
@@ -597,6 +597,11 @@ class Agent:
         command = str(call.arguments.get("command", "")).lower()
         return bool(re.search(r"(^|[;&|]\s*)git\s+", command))
 
+    def _is_safe_repeated_tool_call(self, call: ToolCall) -> bool:
+        if call.name in {"list_dir", "read_file", "grep_search", "glob_files", "github_read_file", "github_list_dir", "github_search_code"}:
+            return True
+        return self._is_idempotent_process_tool_call(call)
+
     def _is_idempotent_process_tool_call(self, call: ToolCall) -> bool:
         if call.name != "bash":
             return False
@@ -611,7 +616,7 @@ class Agent:
         )
 
     def _repeated_tool_call_message(self, call: ToolCall, skipped: bool) -> str:
-        prefix = "Skipped repeated process check/cleanup command" if skipped else "Error: Repeated identical tool call blocked"
+        prefix = "Skipped repeated safe tool call" if skipped else "Error: Repeated identical tool call blocked"
         message = (
             f"{prefix}: {call.name} {json.dumps(call.arguments, ensure_ascii=False)}. "
             "Do not repeat the same command. If the task is complete, respond with the final summary. "
