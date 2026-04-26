@@ -30,6 +30,7 @@ AVAILABLE TOOLS:
 - write_file(path, content): Create new files with specific content.
 - edit_file(path, old_string, new_string): Make targeted changes to existing code.
 - bash(command): Execute bash commands, run tests, install packages, git operations.
+- git_init(): Initialize a git repository in the project root.
 - grep_search(pattern, path): Search for code patterns using regex.
 - list_dir(path): List directories to understand project structure.
 - glob_files(pattern): Find files matching a glob pattern.
@@ -70,7 +71,7 @@ After exploring, produce a plan in this format:
 - potential issues or edge cases
 """
 
-BUILD_SYSTEM_PROMPT = """You are in BUILD MODE. Your task is to implement the requested application or feature by creating and editing files.
+BUILD_SYSTEM_PROMPT = """You are in BUILD / DEBUG MODE. Your task is to implement requested features, create files, run git or shell workflows, and diagnose/fix bugs.
 
 CRITICAL: You MUST use the tools (write_file, edit_file, bash) immediately. 
 
@@ -80,11 +81,14 @@ CRITICAL: You MUST use the tools (write_file, edit_file, bash) immediately.
 - JUST OUTPUT THE JSON TOOL CALL.
 - For file contents, ALWAYS use write_file with a JSON string content value.
 - Do NOT use bash, echo, printf, cat, heredocs, or shell redirection to create HTML, CSS, JavaScript, JSON, Python, or other source files.
-- Use bash only for simple commands like mkdir, npm install, or running tests.
+- Use bash only for simple commands like mkdir, npm install, or running tests. Use git_init for repository initialization.
+- If a branch may already exist, use `git checkout branch` or `git switch branch` instead of `git checkout -b branch`.
+- For debugging tasks, inspect files, reproduce or verify the issue with bash when possible, then fix it with write_file or edit_file when a code change is needed.
+- For remote git tasks, report the exact terminal output of git commands and never claim a push succeeded if the command returned an error.
 
 If the directory is empty, start with the main application files (e.g., main.py, requirements.txt, index.html).
 
-Do not stop until the core functionality is implemented.
+Do not stop until the requested work is implemented, verified, or blocked by a real tool error that you report accurately.
 """
 
 DEBUG_SYSTEM_PROMPT = """You are in DEBUG MODE. Your task is to diagnose and fix bugs using the available filesystem and shell tools.
@@ -189,8 +193,11 @@ class Agent:
 
         system_prompt = self._get_system_prompt()
         tool_schemas = self._get_tool_schemas()
-        successful_tool_round_seen = False
+        completed_action_tool_seen = False
+        file_mutation_tool_seen = False
+        last_tool_error = ""
 
+        exhausted_rounds = True
         for _ in range(self.max_tool_rounds):
             tool_calls_seen: list[ToolCall] = []
             text_buffer = []
@@ -204,8 +211,9 @@ class Agent:
                 system_prompt,
             ):
                 if isinstance(item, str):
-                    yield item
                     text_buffer.append(item)
+                    if self.mode not in ("build", "debug"):
+                        yield item
                 elif isinstance(item, ToolCall):
                     tool_calls_seen.append(item)
 
@@ -228,7 +236,13 @@ class Agent:
 
             if not tool_calls_seen:
                 if self.mode in ("build", "debug"):
-                    if successful_tool_round_seen and assistant_text.strip():
+                    if self._can_finish_action_mode(
+                        completed_action_tool_seen,
+                        file_mutation_tool_seen,
+                        assistant_text,
+                    ):
+                        yield assistant_text
+                        exhausted_rounds = False
                         break
                     if self._looks_like_fake_tool_call(assistant_text):
                         retry = (
@@ -249,10 +263,12 @@ class Agent:
                         )
                     )
                     continue
+                exhausted_rounds = False
                 break  # No tools called, we're done
 
             # Execute tools and collect results
             tool_results = []
+            executed_tool_names: list[str] = []
             for tc in tool_calls_seen:
                 tc = self._normalize_tool_call(tc)
                 if self._tool_call_has_raw_arguments(tc):
@@ -276,13 +292,16 @@ class Agent:
                         )
                     )
                     continue
+                executed_tool_names.append(tc.name)
                 yield ToolEvent(
                     type="start",
                     tool_name=tc.name,
                     arguments=tc.arguments,
                 )
                 result = self.registry.execute(tc.name, tc.arguments)
-                is_error = result.startswith("Error:")
+                is_error = self._is_tool_result_error(result)
+                if is_error:
+                    last_tool_error = f"{tc.name}: {result[:2000]}"
                 yield ToolEvent(
                     type="result",
                     tool_name=tc.name,
@@ -303,19 +322,40 @@ class Agent:
                 Message(role="tool", content="", tool_results=tool_results)
             )
             if tool_results and not any(tr.is_error for tr in tool_results):
-                successful_tool_round_seen = True
+                completed_action_tool_seen = completed_action_tool_seen or any(
+                    self._is_completion_action_tool(name) for name in executed_tool_names
+                )
+                file_mutation_tool_seen = file_mutation_tool_seen or any(
+                    self._is_file_mutation_tool(name) for name in executed_tool_names
+                )
             if self.mode in ("build", "debug") and any(tr.is_error for tr in tool_results):
+                failed_results = [
+                    f"- {name}: {tr.content[:1000]}"
+                    for name, tr in zip(executed_tool_names, tool_results)
+                    if tr.is_error
+                ]
                 self.history.append(
                     Message(
                         role="user",
                         content=(
-                            "The previous tool call failed. Retry with valid structured tool arguments. "
+                            "The previous tool call failed:\n"
+                            + "\n".join(failed_results)
+                            + "\n\nRetry with valid structured tool arguments. "
                             "For source-code changes, read_file first, then use write_file with the "
                             "complete corrected file content. Do not use shell quoting, heredocs, echo, "
-                            "printf, cat, or redirection to create or edit source files."
+                            "printf, cat, or redirection to create or edit source files. "
+                            "For git commands, use paths relative to the actual git repository root, "
+                            "or run `cd path/to/repo && git ...` inside the bash command. "
+                            "If a branch already exists, switch to it with `git checkout branch` "
+                            "instead of creating it again with `git checkout -b branch`."
                         ),
                     )
                 )
+        else:
+            exhausted_rounds = True
+
+        if exhausted_rounds and self.mode in ("build", "debug"):
+            yield f"\n\n{self._action_mode_exhausted_error(completed_action_tool_seen, last_tool_error)}"
 
     def _parse_manual_tool_calls(self, text: str) -> list[ToolCall]:
         """Detect JSON tool calls in raw text (fallback for stubborn models)."""
@@ -382,6 +422,79 @@ class Agent:
 
     def _tool_call_has_raw_arguments(self, call: ToolCall) -> bool:
         return isinstance(call.arguments, dict) and isinstance(call.arguments.get("raw"), str)
+
+    def _can_finish_action_mode(
+        self,
+        completed_action_tool_seen: bool,
+        file_mutation_tool_seen: bool,
+        assistant_text: str,
+    ) -> bool:
+        if not assistant_text.strip():
+            return False
+        if self.mode == "debug":
+            return file_mutation_tool_seen
+        if self.mode == "build":
+            return completed_action_tool_seen
+        return True
+
+    def _action_mode_exhausted_error(
+        self,
+        completed_action_tool_seen: bool = False,
+        last_tool_error: str = "",
+    ) -> str:
+        if last_tool_error:
+            return (
+                f"Error: {self.mode.capitalize()} mode stopped after reaching the tool retry limit. "
+                f"The last tool error was:\n{last_tool_error}"
+            )
+        if completed_action_tool_seen:
+            return (
+                f"Error: {self.mode.capitalize()} mode stopped after reaching the tool retry limit. "
+                "Some local actions completed, but the agent did not produce a trusted final answer."
+            )
+        if self.mode == "debug":
+            return (
+                "Error: Debug mode stopped after reaching the tool retry limit without "
+                "a verified local file change. No final text was trusted because no successful "
+                "write/edit action completed."
+            )
+        return (
+            "Error: Build mode stopped after reaching the tool retry limit without "
+            "a verified successful action. No final text was trusted because no successful "
+            "write/edit/bash/git action completed."
+        )
+
+    def _is_completion_action_tool(self, tool_name: str) -> bool:
+        return tool_name in {
+            "write_file",
+            "edit_file",
+            "bash",
+            "git_add",
+            "git_init",
+            "git_commit",
+            "git_push",
+            "github_write_file",
+            "github_delete_file",
+        }
+
+    def _is_file_mutation_tool(self, tool_name: str) -> bool:
+        return tool_name in {
+            "write_file",
+            "edit_file",
+            "github_write_file",
+            "github_delete_file",
+        }
+
+    def _is_tool_result_error(self, result: str) -> bool:
+        lowered = result.lstrip().lower()
+        return (
+            lowered.startswith("error:")
+            or lowered.startswith("tool call error")
+            or lowered.startswith("tool execution error")
+            or lowered.startswith("unknown tool:")
+            or "[exit code:" in lowered
+            or lowered.startswith("fatal:")
+        )
 
     def _looks_like_fake_tool_call(self, text: str) -> bool:
         lowered = text.lower()

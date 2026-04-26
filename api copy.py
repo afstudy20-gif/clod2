@@ -1,4 +1,4 @@
-"""FastAPI web interface for Clod — wraps the multi-provider agent."""
+"""FastAPI web interface for Cclaude — wraps the multi-provider agent."""
 import json
 import os
 import subprocess
@@ -14,7 +14,7 @@ from src.core.config import get_api_key, load_config
 from src.core.session import list_sessions, load_session, save_session, delete_session
 from src.providers import get_provider, PROVIDERS
 
-app = FastAPI(title="Clod API", version="0.1.0")
+app = FastAPI(title="Cclaude API", version="0.1.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -41,7 +41,6 @@ class ChatRequest(BaseModel):
     provider: str = "openai"
     model: str | None = None
     system: str = "You are a helpful assistant."
-    mode: str = "chat"               # "chat" | "build" | "debug" | "explore" | "plan"
     github_repo: str | None = None   # e.g. "owner/repo" — included in system prompt if set
     github_branch: str = "main"
     workspace: str | None = None     # local project directory for file tools
@@ -65,7 +64,7 @@ def root():
     index = Path(__file__).parent / "static" / "index.html"
     if index.exists():
         return FileResponse(str(index))
-    return {"name": "Clod API", "version": "0.1.0", "docs": "/docs"}
+    return {"name": "Cclaude API", "version": "0.1.0", "docs": "/docs"}
 
 
 @app.get("/health")
@@ -86,10 +85,8 @@ def chat(req: ChatRequest):
                    f"Set the env var or use /config to save it.",
         )
 
-    model = _normalize_requested_model(req.provider, req.model)
-
     try:
-        provider = get_provider(req.provider, api_key=api_key, model=model)
+        provider = get_provider(req.provider, api_key=api_key, model=req.model)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -98,118 +95,52 @@ def chat(req: ChatRequest):
     from src.tools.registry import get_default_registry
     from src.tools.implementations import set_project_root
 
+    workspace = Path(req.workspace).expanduser().resolve() if req.workspace else Path.cwd()
     try:
-        workspace = Path(req.workspace).expanduser().resolve() if req.workspace else Path.cwd()
         workspace.mkdir(parents=True, exist_ok=True)
-        set_project_root(str(workspace))
     except Exception as e:
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=400, detail=f"Workspace error: {e}")
+        raise HTTPException(status_code=400, detail=f"Could not access workspace '{req.workspace}': {e}")
+    if not workspace.is_dir():
+        raise HTTPException(status_code=400, detail=f"Workspace is not a directory: {workspace}")
+    set_project_root(str(workspace))
 
     # Load session history if provided
     session_messages: list[InternalMessage] = []
     if req.session_id:
         try:
             session_messages, _ = load_session(req.session_id)
-        except Exception as e:
-            print(f"Warning: could not load session {req.session_id}: {e}")
+        except FileNotFoundError:
+            pass
 
-    try:
-        supports_images = getattr(provider, "SUPPORTS_IMAGES", False)
-        internal_messages = session_messages + [
-            InternalMessage(role=m.role, content=_prepare_message_content(m.content, supports_images))
-            for m in req.messages
-        ]
+    supports_images = getattr(provider, "SUPPORTS_IMAGES", False)
+    internal_messages = session_messages + [
+        InternalMessage(role=m.role, content=_prepare_message_content(m.content, supports_images))
+        for m in req.messages
+    ]
 
-        registry = get_default_registry()
-        agent = Agent(provider, registry, project_root=str(workspace))
-        agent.history = internal_messages[:-1]  # All but last (chat() appends it)
+    registry = get_default_registry()
+    agent = Agent(provider, registry, project_root=str(workspace))
+    agent.history = internal_messages[:-1]  # All but last (chat() appends it)
 
-        last_msg = _prepare_message_content(req.messages[-1].content, supports_images) if req.messages else ""
-        last_msg = _apply_chat_mode(last_msg, req.mode)
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Setup error: {e}")
+    last_msg = _prepare_message_content(req.messages[-1].content, supports_images) if req.messages else ""
 
     def generate():
         try:
             for chunk in agent.chat(last_msg):
                 if isinstance(chunk, ToolEvent):
-                    yield f"data: {json.dumps({'tool_event': {'type': chunk.type, 'name': chunk.tool_name, 'arguments': chunk.arguments, 'result': (chunk.result or '')[:2000]}})}\n\n"
+                    yield f"data: {json.dumps({'tool_event': {'type': chunk.type, 'name': chunk.tool_name, 'result': (chunk.result or '')[:2000]}})}\n\n"
                 else:
                     yield f"data: {json.dumps({'text': str(chunk)})}\n\n"
         except Exception as e:
-            import traceback
-            traceback.print_exc()  # Log to server console
             yield f"data: {json.dumps({'error': str(e)})}\n\n"
 
         # Auto-save session if session_id provided
         if req.session_id:
-            save_session(req.session_id, agent.history, req.provider, model or "")
+            save_session(req.session_id, agent.history, req.provider, req.model or "")
 
         yield "data: [DONE]\n\n"
 
     return StreamingResponse(generate(), media_type="text/event-stream")
-
-
-def _apply_chat_mode(message, mode: str):
-    """Convert the web UI mode selector into the same slash commands as the CLI."""
-    normalized = (mode or "chat").strip().lower()
-    if normalized == "build_debug":
-        normalized = _infer_build_or_debug_mode(message)
-    if normalized not in {"build", "debug", "explore", "plan"}:
-        return message
-    if not isinstance(message, str):
-        return message
-    stripped = message.lstrip()
-    if stripped.startswith(("/build", "/debug", "/explore", "/plan")):
-        return message
-    return f"/{normalized} {message}"
-
-
-def _infer_build_or_debug_mode(message) -> str:
-    """Use the stricter /debug path for bug-fix requests, otherwise /build."""
-    if not isinstance(message, str):
-        return "build"
-    lowered = message.lower()
-    debug_markers = (
-        "/debug",
-        "debug",
-        "bug",
-        "error",
-        "exception",
-        "traceback",
-        "stack trace",
-        "failed",
-        "failing",
-        "failure",
-        "fix",
-        "crash",
-        "broken",
-        "not working",
-        "doesn't work",
-        "division by zero",
-        "zerodivisionerror",
-    )
-    return "debug" if any(marker in lowered for marker in debug_markers) else "build"
-
-
-def _normalize_requested_model(provider: str, model: str | None) -> str | None:
-    """Avoid sending known-stale model ids to providers."""
-    if provider.lower() not in {"nvidia", "nim"} or not model:
-        return model
-
-    stale_nvidia_models = {
-        "nvidia/llama-3.1-nemotron-ultra-253b-v1",
-        "nvidia/llama-3.3-nemotron-super-49b-v1",
-        "meta/llama-3.1-405b-instruct",
-        "meta/llama-3.3-70b-instruct",
-    }
-    if model in stale_nvidia_models:
-        return None
-    return model
 
 
 def _message_text(content: str | list[dict]) -> str:
@@ -236,7 +167,6 @@ class PushRequest(BaseModel):
     remote: str = "origin"
     branch: str | None = None
     force: bool = False
-    commit_message: str = "Update from Clod assistant"
 
 
 class TerminalRunRequest(BaseModel):
@@ -247,48 +177,19 @@ class TerminalRunRequest(BaseModel):
 
 @app.post("/git/push")
 def push_to_github(req: PushRequest):
-    """Stage, commit, and push changes to GitHub."""
-    import subprocess
-    from pathlib import Path
-    
-    ws_path = Path(req.workspace).expanduser().resolve() if req.workspace else Path.cwd()
-    if not ws_path.exists() or not ws_path.is_dir():
-        raise HTTPException(status_code=400, detail="Invalid workspace path")
+    """Push the selected local workspace to a GitHub remote."""
+    from src.tools.git_tools import git_push
+    from src.tools.implementations import set_project_root
 
-    def run_cmd(args):
-        return subprocess.run(args, cwd=str(ws_path), capture_output=True, text=True, timeout=60)
+    workspace = Path(req.workspace).expanduser().resolve() if req.workspace else Path.cwd()
+    if not workspace.is_dir():
+        raise HTTPException(status_code=400, detail=f"Workspace is not a directory: {workspace}")
+    if not (workspace / ".git").exists():
+        raise HTTPException(status_code=400, detail=f"Workspace is not a git repository: {workspace}")
 
-    try:
-        # Check if it's a git repo
-        if not (ws_path / ".git").exists():
-            run_cmd(["git", "init"])
-            # If no remote is provided, we can't push, but we can at least init
-            if not req.remote.startswith("http"):
-                return {"ok": False, "output": "Not a git repository and no remote URL provided."}
-            run_cmd(["git", "remote", "add", "origin", req.remote])
-        
-        # Add all
-        run_cmd(["git", "add", "."])
-        
-        # Commit (only if there are changes)
-        check = run_cmd(["git", "status", "--porcelain"])
-        if not check.stdout.strip():
-            return {"ok": True, "output": "No changes to commit"}
-            
-        run_cmd(["git", "commit", "-m", req.commit_message])
-        
-        # Push
-        res = run_cmd(["git", "branch", "--show-current"])
-        branch = req.branch or res.stdout.strip() or "main"
-        
-        proc = run_cmd(["git", "push", req.remote, branch, "--force" if req.force else ""])
-        if proc.returncode == 0:
-            return {"ok": True, "output": proc.stdout or f"Successfully pushed to GitHub ({branch})"}
-        else:
-            return {"ok": False, "output": proc.stderr or "Push failed"}
-
-    except Exception as e:
-        return {"ok": False, "output": str(e)}
+    set_project_root(str(workspace))
+    output = git_push(remote=req.remote, branch=req.branch or "", force=req.force)
+    return {"ok": not output.lower().startswith("error:"), "output": output}
 
 
 @app.post("/terminal/run")
@@ -405,6 +306,76 @@ def run_tool_manually(req: ToolRunRequest):
         return {"ok": True, "result": result}
     except Exception as e:
         return {"ok": False, "error": str(e)}
+
+
+@app.get("/config/keys")
+def get_saved_keys():
+    """Return which providers have saved API keys (without revealing the keys)."""
+    config = load_config()
+    keys = config.get("api_keys", {})
+    import os
+    env_map = {
+        "openai": "OPENAI_API_KEY",
+        "claude": "ANTHROPIC_API_KEY",
+        "gemini": "GOOGLE_API_KEY",
+        "groq": "GROQ_API_KEY",
+        "mistral": "MISTRAL_API_KEY",
+        "deepseek": "DEEPSEEK_API_KEY",
+        "nvidia": "NVIDIA_API_KEY",
+        "cohere": "COHERE_API_KEY",
+        "openrouter": "OPENROUTER_API_KEY",
+        "tavily": "TAVILY_API_KEY",
+    }
+    return {p: (keys.get(p) or os.environ.get(env_map.get(p, ""))) is not None for p in PROVIDERS}
+
+
+@app.post("/git/push")
+def git_push(req: WorkspaceRequest):
+    """Stage, commit, and push changes to GitHub."""
+    import subprocess
+    import os
+    from pathlib import Path
+
+    ws_path = Path(req.workspace).expanduser().resolve() if req.workspace else Path.cwd()
+    if not ws_path.exists() or not ws_path.is_dir():
+        raise HTTPException(status_code=400, detail="Invalid workspace path")
+
+    def run_cmd(args):
+        return subprocess.run(args, cwd=str(ws_path), capture_output=True, text=True, timeout=60)
+
+    try:
+        # Check if it's a git repo
+        if not (ws_path / ".git").exists():
+            # Initialize if not
+            run_cmd(["git", "init"])
+            run_cmd(["git", "remote", "add", "origin", "https://github.com/afstudy20-gif/Cclaude.git"])
+        
+        # Add all
+        run_cmd(["git", "add", "."])
+        
+        # Commit (only if there are changes)
+        check = run_cmd(["git", "status", "--porcelain"])
+        if not check.stdout.strip():
+            return {"ok": True, "output": "No changes to commit"}
+            
+        commit_msg = "Update from CClaude assistant"
+        run_cmd(["git", "commit", "-m", commit_msg])
+        
+        # Push
+        # We try to push to current branch, usually main or master
+        res = run_cmd(["git", "branch", "--show-current"])
+        branch = res.stdout.strip() or "main"
+        
+        proc = run_cmd(["git", "push", "origin", branch])
+        if proc.returncode == 0:
+            return {"ok": True, "output": proc.stdout or f"Successfully pushed to GitHub ({branch})"}
+        else:
+            # Maybe need to set upstream
+            run_cmd(["git", "push", "--set-upstream", "origin", branch])
+            return {"ok": False, "output": proc.stderr or "Push failed"}
+
+    except Exception as e:
+        return {"ok": False, "output": str(e)}
 
 
 @app.get("/config/keys/status")

@@ -62,6 +62,14 @@ def git_add(paths: str = ".") -> str:
         # Show what was staged
         status_out, _ = _git(["status", "--short"])
         return f"Staged: {paths}\n{status_out}"
+    return f"Error: {out}"
+
+
+def git_init() -> str:
+    """Initialize a git repository in the current project root."""
+    out, code = _git(["init"])
+    if code != 0:
+        return f"Error: {out}"
     return out
 
 
@@ -70,6 +78,8 @@ def git_commit(message: str) -> str:
     if not message:
         return "Error: commit message is required"
     out, code = _git(["commit", "-m", message])
+    if code != 0:
+        return f"Error: {out}"
     return out
 
 
@@ -92,6 +102,8 @@ def git_pull(remote: str = "origin", branch: str = "") -> str:
     if branch:
         args.append(branch)
     out, code = _git(args)
+    if code != 0:
+        return f"Error: {out}"
     return out
 
 
@@ -102,14 +114,20 @@ def git_branch(name: str = "", delete: bool = False, list_all: bool = False) -> 
         return out
     if delete:
         out, code = _git(["branch", "-d", name])
+        if code != 0:
+            return f"Error: {out}"
         return out
     out, code = _git(["checkout", "-b", name])
+    if code != 0:
+        return f"Error: {out}"
     return out
 
 
 def git_checkout(ref: str) -> str:
     """Switch to a branch, tag, or commit."""
     out, code = _git(["checkout", ref])
+    if code != 0:
+        return f"Error: {out}"
     return out
 
 

@@ -9,6 +9,7 @@ from .git_tools import (
     git_commit,
     git_create_pr,
     git_diff,
+    git_init,
     git_log,
     git_pull,
     git_push,
@@ -335,6 +336,19 @@ def get_default_registry() -> ToolRegistry:
             },
         },
         git_add,
+    )
+
+    reg.register(
+        {
+            "name": "git_init",
+            "description": "Initialize a git repository in the selected project root.",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": [],
+            },
+        },
+        git_init,
     )
 
     reg.register(

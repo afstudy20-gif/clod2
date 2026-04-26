@@ -78,6 +78,7 @@ def bash(command: str, timeout: int = 30) -> str:
     """Execute a shell command and return stdout + stderr."""
     if timeout > 120:
         timeout = 120
+    command = _normalize_shell_command(command)
     try:
         result = subprocess.run(
             command,
@@ -93,12 +94,65 @@ def bash(command: str, timeout: int = 30) -> str:
         if result.stderr:
             output += result.stderr
         if result.returncode != 0:
+            recovered = _recover_git_checkout_existing_branch(command, result.stderr, timeout)
+            if recovered is not None:
+                return recovered
+        if result.returncode != 0:
             output += f"\n[Exit code: {result.returncode}]"
-        return output.strip() or "(no output)"
+        output = output.strip() or "(no output)"
+        if result.returncode != 0:
+            return f"Error: {output}"
+        return output
     except subprocess.TimeoutExpired:
         return f"Error: Command timed out after {timeout}s"
     except Exception as e:
         return f"Error: {e}"
+
+
+def _normalize_shell_command(command: str) -> str:
+    """Normalize common copied Unicode punctuation that breaks shell/git commands."""
+    return (
+        command
+        .replace("\u2014-", "--")
+        .replace("\u2013-", "--")
+        .replace("\u2014", "--")
+        .replace("\u2013", "--")
+    )
+
+
+def _recover_git_checkout_existing_branch(command: str, stderr: str, timeout: int) -> str | None:
+    """Turn `git checkout -b existing` into `git checkout existing` for repeatable tests."""
+    if "a branch named" not in stderr or "already exists" not in stderr:
+        return None
+    match = re.search(r"\bgit\s+checkout\s+-b\s+([^\s;&|]+)", command)
+    if not match:
+        return None
+    branch = match.group(1).strip("'\"")
+    repaired = re.sub(
+        r"\bgit\s+checkout\s+-b\s+([^\s;&|]+)",
+        f"git checkout {branch}",
+        command,
+        count=1,
+    )
+    try:
+        retry = subprocess.run(
+            repaired,
+            shell=True,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            cwd=_project_root,
+        )
+    except Exception as e:
+        return f"Error: {stderr.strip()}\nRecovery failed: {e}"
+
+    retry_output = ((retry.stdout or "") + (retry.stderr or "")).strip()
+    note = (
+        f"Recovered: branch '{branch}' already existed, so ran `{repaired}` instead."
+    )
+    if retry.returncode != 0:
+        return f"Error: {stderr.strip()}\n{note}\n{retry_output}\n[Exit code: {retry.returncode}]"
+    return "\n".join(part for part in [note, retry_output] if part)
 
 
 def glob_files(pattern: str, path: str = ".") -> str:

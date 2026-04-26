@@ -766,8 +766,7 @@
         <div class="field-label">Mode</div>
         <select id="mode-select" onchange="onModeChange()">
           <option value="chat">Chat</option>
-          <option value="build">Build</option>
-          <option value="debug">Debug</option>
+          <option value="build_debug">Build / Debug</option>
           <option value="explore">Explore</option>
           <option value="plan">Plan</option>
         </select>
@@ -825,7 +824,7 @@
             <strong>Explain</strong>Explain how streaming works
           </div>
           <div class="hint" onclick="sendHint(this)">
-            <strong>Debug</strong>Help me fix this error in my code
+            <strong>Build / Debug</strong>Fix a bug or build a small app
           </div>
           <div class="hint" onclick="sendHint(this)">
             <strong>Refactor</strong>Improve performance of this function
@@ -870,6 +869,10 @@
 </div>
 
 <script>
+if (window.location.protocol === 'file:') {
+  window.location.href = 'http://127.0.0.1:8000';
+}
+
 // Models — fallback defaults, overridden by backend on load
 let MODELS = {
   openai:     ['gpt-5.5','gpt-5.4','gpt-5.4-mini','gpt-5.4-nano','gpt-5','gpt-5-mini','gpt-5-nano','gpt-4.1','gpt-4.1-mini','gpt-4.1-nano','o3','o4-mini'],
@@ -956,7 +959,8 @@ async function init() {
   const savedProvider = localStorage.getItem('cclaude_provider') || 'openai';
   const savedModel = localStorage.getItem('cclaude_model');
   document.getElementById('workspace-input').value = localStorage.getItem('cclaude_workspace') || '';
-  document.getElementById('mode-select').value = localStorage.getItem('cclaude_mode') || 'chat';
+  const savedMode = localStorage.getItem('cclaude_mode') || 'chat';
+  document.getElementById('mode-select').value = savedMode === 'build' || savedMode === 'debug' ? 'build_debug' : savedMode;
   ps.value = savedProvider;
   onProviderChange();
   if (savedModel) {
@@ -1120,8 +1124,9 @@ function updateTopbar() {
   const p = document.getElementById('provider-select').value;
   const m = document.getElementById('model-select').value;
   const mode = document.getElementById('mode-select')?.value || 'chat';
+  const modeLabel = mode === 'build_debug' ? 'Build / Debug' : mode;
   document.getElementById('tb-provider').textContent = PROVIDER_NAMES[p] || p;
-  document.getElementById('tb-model').textContent = mode === 'chat' ? m : `${m} / ${mode}`;
+  document.getElementById('tb-model').textContent = mode === 'chat' ? m : `${m} / ${modeLabel}`;
 
   const ks = keyStatuses[p];
   const keyEl = document.getElementById('tb-key-status');
@@ -1153,7 +1158,10 @@ function estimateTokens(text) {
 
 function estimateMessageTokens(message) {
   if (!message) return 0;
-  return estimateTokens(message.content || '');
+  const toolText = Array.isArray(message.toolEvents)
+    ? message.toolEvents.map(t => `${t.name || ''} ${t.type || ''} ${JSON.stringify(t.arguments || {})} ${t.result || ''}`).join('\n')
+    : '';
+  return estimateTokens(`${message.content || ''}\n${toolText}`);
 }
 
 function getActiveTokenUsage() {
@@ -1225,7 +1233,7 @@ function loadChat(id) {
   }
   chat.messages.forEach(m => {
     if (m.role === 'user') appendUserMsg(getMessageText(m), false, getMessageImages(m));
-    else if (m.role === 'assistant') appendAssistantMsg(getMessageText(m), false);
+    else if (m.role === 'assistant') appendAssistantMsg(getMessageText(m), false, m.toolEvents || []);
   });
   msgs.scrollTop = msgs.scrollHeight;
   updateTokenMonitor();
@@ -1239,7 +1247,7 @@ function showWelcome() {
       <div class="hints">
         <div class="hint" onclick="sendHint(this)"><strong>Write code</strong>Write a Python function to parse JSON</div>
         <div class="hint" onclick="sendHint(this)"><strong>Explain</strong>Explain how streaming works</div>
-        <div class="hint" onclick="sendHint(this)"><strong>Debug</strong>Help me fix this error in my code</div>
+        <div class="hint" onclick="sendHint(this)"><strong>Build / Debug</strong>Fix a bug or build a small app</div>
         <div class="hint" onclick="sendHint(this)"><strong>Refactor</strong>Improve performance of this function</div>
       </div>
     </div>`;
@@ -1459,6 +1467,7 @@ async function streamAssistant(chat) {
   scrollBottom();
 
   let fullText = '';
+  let toolEvents = [];
 
   try {
     const payload = {
@@ -1477,11 +1486,19 @@ async function streamAssistant(chat) {
     });
 
     if (!resp.ok) {
-      const err = await resp.json().catch(() => ({ detail: resp.statusText }));
-      body.innerHTML = `<span style="color:var(--red)">Error: ${escHtml(err.detail || 'Request failed')}</span>`;
+      let detail = resp.statusText || 'Request failed';
+      try {
+        const err = await resp.json();
+        detail = err.detail || err.error || JSON.stringify(err);
+      } catch {
+        const raw = await resp.text().catch(() => '');
+        detail = raw || detail;
+      }
+      body.innerHTML = `<span style="color:var(--red)">Error ${resp.status}: ${escHtml(detail)}</span>`;
       streamingAssistantText = '';
       isStreaming = false;
       document.getElementById('send-btn').disabled = false;
+      document.getElementById('stop-btn').style.display = 'none';
       updateTokenMonitor();
       return;
     }
@@ -1506,30 +1523,30 @@ async function streamAssistant(chat) {
             fullText += ev.text;
             streamingAssistantText = fullText;
             updateTokenMonitor();
-            body.innerHTML = renderMarkdown(fullText) + '<span class="cursor"></span>';
-            addCopyButtons(body);
+            renderAssistantBody(body, fullText, toolEvents, true);
             scrollBottom();
           } else if (ev.tool_event) {
-            appendToolBlock(body, ev.tool_event);
+            toolEvents.push(ev.tool_event);
+            renderAssistantBody(body, fullText, toolEvents, true);
             scrollBottom();
           } else if (ev.error) {
             fullText += `\n\n**Error:** ${ev.error}`;
-            body.innerHTML = renderMarkdown(fullText);
+            renderAssistantBody(body, fullText, toolEvents, false);
           }
         } catch {}
       }
     }
   } catch (err) {
-    body.innerHTML = renderMarkdown(fullText) + `\n<span style="color:var(--red)">Network error: ${escHtml(err.message)}</span>`;
+    fullText += `\n\nNetwork error: ${err.message}`;
+    renderAssistantBody(body, fullText, toolEvents, false);
   }
 
   const cursor = body.querySelector('.cursor');
   if (cursor) cursor.remove();
-  body.innerHTML = renderMarkdown(fullText);
-  addCopyButtons(body);
+  renderAssistantBody(body, fullText, toolEvents, false);
   hljs.highlightAll();
 
-  chat.messages.push({ role: 'assistant', content: fullText });
+  chat.messages.push({ role: 'assistant', content: fullText, toolEvents });
   streamingAssistantText = '';
   saveChats();
   updateTokenMonitor();
@@ -1556,7 +1573,10 @@ async function copyAllChat() {
   const text = currentChat.messages.map(m => {
     const role = m.role.charAt(0).toUpperCase() + m.role.slice(1);
     const content = typeof m.content === 'string' ? m.content : JSON.stringify(m.content);
-    return `### ${role}\n${content}\n`;
+    const tools = Array.isArray(m.toolEvents) && m.toolEvents.length
+      ? '\n\nTools:\n' + m.toolEvents.map(formatToolEventForCopy).join('\n\n')
+      : '';
+    return `### ${role}\n${content}${tools}\n`;
   }).join('\n---\n\n');
   
   try {
@@ -1593,7 +1613,7 @@ function appendUserMsg(text, scroll = true, images = []) {
   if (scroll) scrollBottom();
 }
 
-function appendAssistantMsg(text, scroll = true) {
+function appendAssistantMsg(text, scroll = true, toolEvents = []) {
   const msgs = document.getElementById('messages');
   const row = document.createElement('div');
   row.className = 'msg-row';
@@ -1602,12 +1622,24 @@ function appendAssistantMsg(text, scroll = true) {
   msg.appendChild(createMessageHeader('assistant', '', text));
   const body = document.createElement('div');
   body.className = 'msg-body';
-  body.innerHTML = renderMarkdown(text);
-  addCopyButtons(body);
+  renderAssistantBody(body, text, toolEvents, false);
   msg.appendChild(body);
   row.appendChild(msg);
   msgs.appendChild(row);
   if (scroll) scrollBottom();
+}
+
+function renderAssistantBody(body, text, toolEvents = [], showCursor = false) {
+  body.innerHTML = renderMarkdown(text || '');
+  if (Array.isArray(toolEvents)) {
+    toolEvents.forEach(tool => appendToolBlock(body, tool));
+  }
+  if (showCursor) {
+    const cursor = document.createElement('span');
+    cursor.className = 'cursor';
+    body.appendChild(cursor);
+  }
+  addCopyButtons(body);
 }
 
 function renderMessageImages(images) {
@@ -1655,22 +1687,47 @@ function createMessageHeader(role, meta, text) {
 }
 
 function appendToolBlock(container, tool) {
-  const argSummary = tool.name || 'tool';
+  const argSummary = summarizeToolArguments(tool);
   const block = document.createElement('div');
   block.className = 'tool-block';
-  const resultHtml = escHtml((tool.result || '').slice(0, 2000));
+  const bodyText = tool.type === 'start' ? formatToolArguments(tool) : (tool.result || '');
+  const resultHtml = escHtml((bodyText || '').slice(0, 2000));
   const uid = 'tool-' + Date.now() + Math.random().toString(36).slice(2);
   block.innerHTML = `
     <div class="tool-header" onclick="toggleTool('${uid}')">
       <span class="tool-icon">*</span>
       <span class="tool-name">${escHtml(tool.name || tool.type || 'tool')}</span>
-      <span class="tool-args-summary">${escHtml(tool.type || '')}</span>
+      <span class="tool-args-summary">${escHtml(argSummary || tool.type || '')}</span>
       <span class="tool-chevron" id="chev-${uid}">&#9654;</span>
     </div>
     <div class="tool-body" id="${uid}">
       <div class="tool-result">${resultHtml || '(no output)'}</div>
     </div>`;
   container.appendChild(block);
+}
+
+function summarizeToolArguments(tool) {
+  const args = tool.arguments || {};
+  if (tool.name === 'bash' && args.command) return `${tool.type || ''} ${args.command}`.trim();
+  if ((tool.name === 'write_file' || tool.name === 'read_file' || tool.name === 'edit_file') && args.path) {
+    return `${tool.type || ''} ${args.path}`.trim();
+  }
+  return tool.type || '';
+}
+
+function formatToolArguments(tool) {
+  const args = tool.arguments || {};
+  if (!Object.keys(args).length) return '';
+  if (tool.name === 'bash' && args.command) return `$ ${args.command}`;
+  if (args.path) return JSON.stringify(args, null, 2);
+  return JSON.stringify(args, null, 2);
+}
+
+function formatToolEventForCopy(tool) {
+  const title = `${tool.name || 'tool'} ${tool.type || ''}`.trim();
+  const args = formatToolArguments(tool);
+  const result = tool.result || '';
+  return [`#### ${title}`, args, result].filter(Boolean).join('\n');
 }
 
 function toggleTool(id) {
