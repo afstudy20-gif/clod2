@@ -668,6 +668,7 @@
   .key-test-result.error { color: var(--red); }
   .key-test-result.testing { color: var(--accent2); }
 
+  #workspace-result,
   #push-result {
     color: var(--text2);
     font-size: 11px;
@@ -676,8 +677,11 @@
     overflow-y: auto;
     white-space: pre-wrap;
   }
+  #workspace-result.success,
   #push-result.success { color: var(--green); }
+  #workspace-result.error,
   #push-result.error { color: var(--red); }
+  #workspace-result.testing { color: var(--accent2); }
   #model-update-result {
     color: var(--text2);
     font-size: 11px;
@@ -788,6 +792,7 @@
           <input id="workspace-input" type="text" placeholder="/Users/you/project" oninput="onWorkspaceChange()" style="flex:1">
           <button class="settings-btn" onclick="browseWorkspace()" title="Browse local folder" style="padding:0 8px;">📁</button>
         </div>
+        <div id="workspace-result"></div>
       </div>
       <div>
         <div class="field-label">Mode</div>
@@ -1234,17 +1239,34 @@ function updateTokenMonitor() {
 }
 
 async function browseWorkspace() {
+  const input = document.getElementById('workspace-input');
+  const result = document.getElementById('workspace-result');
+  const show = (message, cls = '') => {
+    if (!result) return;
+    result.textContent = message || '';
+    result.className = cls;
+  };
+
   try {
     const resp = await fetch('/config/browse', { method: 'POST' });
     const data = await resp.json();
     if (data.path) {
-      document.getElementById('workspace-input').value = data.path;
+      input.value = data.path;
+      show(`Workspace selected: ${data.path}`, 'success');
       onWorkspaceChange();
+    } else if (data.unsupported) {
+      const hint = data.cwd || data.home || '/workspace';
+      input.placeholder = hint;
+      input.focus();
+      show(
+        `${data.error || 'Folder picker is not available here.'}\nType a server-side path in Workspace, for example: ${hint}`,
+        'testing'
+      );
     } else if (data.error && data.error !== 'Cancelled') {
-      alert('Error browsing folder: ' + data.error);
+      show('Error browsing folder: ' + data.error, 'error');
     }
   } catch (e) {
-    alert('Network error browsing folder: ' + e.message);
+    show('Network error browsing folder: ' + e.message, 'error');
   }
 }
 

@@ -381,9 +381,31 @@ def test_key(req: KeyRequest):
 
 @app.post("/config/browse")
 def browse_folder():
-    """Open a native folder picker on the host machine (Mac-only helper)."""
+    """Open a native folder picker when available on the host machine."""
     import subprocess
-    import os
+    import platform
+    import shutil
+
+    system = platform.system().lower()
+    if system != "darwin":
+        return {
+            "path": None,
+            "unsupported": True,
+            "cwd": str(Path.cwd()),
+            "home": str(Path.home()),
+            "error": (
+                "Native folder browsing is only available when Clod runs locally on macOS. "
+                "Enter the workspace path manually on this hosted/Linux deployment."
+            ),
+        }
+    if not shutil.which("osascript"):
+        return {
+            "path": None,
+            "unsupported": True,
+            "cwd": str(Path.cwd()),
+            "home": str(Path.home()),
+            "error": "macOS folder picker is unavailable because osascript was not found.",
+        }
     
     # Use AppleScript to pick a folder on Mac
     script = 'POSIX path of (choose folder with prompt "Select Workspace")'
