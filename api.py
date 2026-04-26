@@ -1,6 +1,7 @@
 """FastAPI web interface for Clod — wraps the multi-provider agent."""
 import json
 import os
+import re
 import subprocess
 from pathlib import Path
 
@@ -34,6 +35,7 @@ if _static.exists():
 class ChatMessage(BaseModel):
     role: str  # "user" | "assistant"
     content: str | list[dict]
+    toolEvents: list[dict] | None = None
 
 
 class ChatRequest(BaseModel):
@@ -127,6 +129,8 @@ def chat(req: ChatRequest):
         agent.history = internal_messages[:-1]  # All but last (chat() appends it)
 
         last_msg = _prepare_message_content(req.messages[-1].content, supports_images) if req.messages else ""
+        if _is_resume_command(last_msg):
+            last_msg = _build_resume_message(internal_messages[:-1], req.messages[:-1])
         last_msg = _apply_chat_mode(last_msg, req.mode)
     except Exception as e:
         import traceback
@@ -167,6 +171,74 @@ def _apply_chat_mode(message, mode: str):
     if stripped.startswith(("/build", "/debug", "/explore", "/plan")):
         return message
     return f"/{normalized} {message}"
+
+
+def _is_resume_command(message) -> bool:
+    """Detect short continuation commands after an interrupted/unfinished task."""
+    if not isinstance(message, str):
+        return False
+    normalized = re.sub(r"[\s.!?]+", " ", message.strip().lower()).strip()
+    return normalized in {
+        "resume",
+        "go",
+        "go on",
+        "continue",
+        "continue please",
+        "finish",
+        "go on and finish",
+        "ok",
+        "okay",
+        "tamam",
+        "devam",
+        "devam et",
+        "bitir",
+    }
+
+
+def _build_resume_message(history: list, chat_messages: list[ChatMessage] | None = None) -> str:
+    previous_user = ""
+    recent_context: list[str] = []
+
+    for msg in reversed(history):
+        if msg.role == "user":
+            text = _message_text(msg.content).strip()
+            if text and not _is_resume_command(text):
+                previous_user = text
+                break
+
+    for msg in history[-12:]:
+        if msg.role == "assistant" and msg.tool_calls:
+            for call in msg.tool_calls[-3:]:
+                recent_context.append(f"tool_start {call.name}: {json.dumps(call.arguments, ensure_ascii=False)[:500]}")
+        elif msg.role == "tool" and msg.tool_results:
+            for result in msg.tool_results[-3:]:
+                status = "error" if result.is_error else "ok"
+                recent_context.append(f"tool_result {status}: {result.content[:700]}")
+
+    if chat_messages:
+        for msg in chat_messages[-8:]:
+            if msg.role != "assistant" or not msg.toolEvents:
+                continue
+            for event in msg.toolEvents[-10:]:
+                name = event.get("name", "tool")
+                event_type = event.get("type", "")
+                args = event.get("arguments")
+                result = str(event.get("result", ""))
+                if event_type == "start":
+                    recent_context.append(f"ui_tool_start {name}: {json.dumps(args, ensure_ascii=False)[:500]}")
+                elif event_type == "result":
+                    recent_context.append(f"ui_tool_result {name}: {result[:1000]}")
+
+    context_text = "\n".join(recent_context[-16:]) or "(No recent tool details were saved.)"
+    previous_text = previous_user or "(Could not identify the previous user task from history.)"
+    return (
+        "Continue the previous unfinished task. Do not restart from scratch unless the existing files are missing. "
+        "First inspect the recent tool results and current files, then perform the next needed action. "
+        "If the previous task requested a final artifact or exact output, verify it and provide that final result. "
+        "If the previous task failed, fix the failure and continue. Do not stop after only saying you resumed.\n\n"
+        f"Previous user task:\n{previous_text}\n\n"
+        f"Recent tool context:\n{context_text}"
+    )
 
 
 def _infer_build_or_debug_mode(message) -> str:

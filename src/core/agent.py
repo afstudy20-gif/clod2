@@ -25,6 +25,7 @@ Guidelines:
 - When the user asks to debug, investigate, fix an error, or find why something fails, use the tools to inspect files, run commands, reproduce the issue, and apply a fix when appropriate.
 - Do not answer with generic limitations such as not having an IDE debugger. You can debug through file inspection, logs, tests, shell commands, and targeted edits.
 - Do not write hypothetical tool calls. If you need to edit a file, emit a real structured tool call for edit_file or write_file.
+- Each bash call runs in a fresh shell. A standalone `cd some_dir` does not persist to later tool calls; combine it with the command, e.g. `cd some_dir && python3 script.py`, or use file-tool paths relative to the workspace.
 
 AVAILABLE TOOLS:
 - read_file(path, offset, limit): Open and view source code, configs, documentation.
@@ -82,11 +83,15 @@ CRITICAL: You MUST use the tools (write_file, edit_file, bash) immediately.
 - JUST OUTPUT THE JSON TOOL CALL.
 - For file contents, ALWAYS use write_file with a JSON string content value.
 - Do NOT use bash, echo, printf, cat, heredocs, or shell redirection to create HTML, CSS, JavaScript, JSON, Python, or other source files.
+- Never replace an existing real value in `.env` with placeholders such as `insert_your_key_here`, `your_api_key`, or `placeholder`. If a user says they already wrote the real key, trust the existing `.env` value and run the requested verification.
 - Use bash only for simple commands like mkdir, npm install, or running tests.
+- Each bash call runs in a fresh shell. Never use standalone `cd` as a setup step; use `cd target_dir && <command>` in the same bash command.
 - Do NOT run git commands or git tools unless the user explicitly asks for git, commit, branch, push, pull, or repository initialization.
 - The host can be macOS, Linux, or Windows. Prefer portable commands. For port checks/cleanup, prefer `lsof -ti tcp:PORT` on macOS/Linux and PowerShell `Get-NetTCPConnection` on Windows; unsupported Linux-only commands may be normalized by the tool layer.
 - If a branch may already exist, use `git checkout branch` or `git switch branch` instead of `git checkout -b branch`.
 - For debugging tasks, inspect files, reproduce or verify the issue with bash when possible, then fix it with write_file or edit_file when a code change is needed.
+- For web scraping with Python requests, HTTP 403 from a public page usually means the script needs realistic request headers such as User-Agent, Accept, and Accept-Language; update the script and rerun it.
+- Python FutureWarning output is not the root failure if the command later shows a traceback; debug the final exception. For Gemini `404 model ... not found`, list available models and choose one that supports `generateContent` instead of guessing old model IDs.
 - For remote git tasks, report the exact terminal output of git commands and never claim a push succeeded if the command returned an error.
 
 If the directory is empty, start with the main application files (e.g., main.py, requirements.txt, index.html).
@@ -103,8 +108,12 @@ CRITICAL: You MUST use tools immediately.
 - Do NOT say you lack an IDE debugger, breakpoints, or step-through debugging.
 - Do NOT write "hypothetical tool call" or say direct editing is not supported.
 - Use bash for tests, linters, logs, or simple runtime checks.
+- Each bash call runs in a fresh shell. Never use standalone `cd` as a setup step; use `cd target_dir && <command>` in the same bash command.
+- Never replace an existing real value in `.env` with placeholders such as `insert_your_key_here`, `your_api_key`, or `placeholder`. If a user says they already wrote the real key, trust the existing `.env` value and run the requested verification.
 - Use read_file, grep, and glob to understand the code before changing it.
 - Use edit_file or write_file to fix the bug when the cause is clear.
+- For web scraping with Python requests, HTTP 403 from a public page usually means the script needs realistic request headers such as User-Agent, Accept, and Accept-Language; update the script and rerun it.
+- Python FutureWarning output is not the root failure if the command later shows a traceback; debug the final exception. For Gemini `404 model ... not found`, list available models and choose one that supports `generateContent` instead of guessing old model IDs.
 - For JavaScript, HTML, CSS, JSON, or other source-file edits, prefer read_file followed by write_file with the complete corrected file content when edit_file quoting would be fragile.
 - After a fix, run the most relevant verification command.
 """
@@ -388,6 +397,9 @@ class Agent:
                 is_error = self._is_tool_result_error(result)
                 if is_error:
                     last_tool_error = f"{tc.name}: {result[:2000]}"
+                elif self._is_file_mutation_tool(tc.name):
+                    # After source files change, rerunning the same test/script command is expected.
+                    recent_tool_call_keys.clear()
                 yield ToolEvent(
                     type="result",
                     tool_name=tc.name,

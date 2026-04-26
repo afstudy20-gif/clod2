@@ -49,6 +49,9 @@ def write_file(path: str, content: str) -> str:
     """Write content to a file, creating parent dirs as needed."""
     p = _resolve_path(path)
     try:
+        guard_error = _guard_env_secret_overwrite(p, content)
+        if guard_error:
+            return guard_error
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(content, encoding="utf-8")
         return f"Written {len(content)} bytes to {path}"
@@ -69,10 +72,79 @@ def edit_file(path: str, old_string: str, new_string: str) -> str:
         if count > 1:
             return f"Error: Found {count} occurrences of the text. Provide more context to make it unique."
         new_content = content.replace(old_string, new_string, 1)
+        guard_error = _guard_env_secret_overwrite(p, new_content)
+        if guard_error:
+            return guard_error
         p.write_text(new_content, encoding="utf-8")
         return f"Successfully edited {path}"
     except Exception as e:
         return f"Error editing file: {e}"
+
+
+def _guard_env_secret_overwrite(path: Path, new_content: str) -> str | None:
+    """Prevent agents from replacing real .env secrets with placeholders."""
+    if path.name != ".env" or not path.exists():
+        return None
+    try:
+        old_content = path.read_text(encoding="utf-8", errors="replace")
+    except Exception:
+        return None
+
+    old_values = _parse_env_assignments(old_content)
+    new_values = _parse_env_assignments(new_content)
+    for key, old_value in old_values.items():
+        if key not in new_values:
+            continue
+        new_value = new_values[key]
+        if _looks_like_real_secret(old_value) and _looks_like_placeholder_secret(new_value):
+            return (
+                f"Error: Refusing to replace existing .env secret `{key}` with a placeholder. "
+                "Keep the user's real key unchanged, or ask the user before modifying secrets."
+            )
+    return None
+
+
+def _parse_env_assignments(content: str) -> dict[str, str]:
+    values: dict[str, str] = {}
+    for raw_line in content.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip().strip("\"'")
+        if key:
+            values[key] = value
+    return values
+
+
+def _looks_like_placeholder_secret(value: str) -> bool:
+    lowered = value.strip().lower()
+    if not lowered:
+        return True
+    return any(
+        marker in lowered
+        for marker in (
+            "placeholder",
+            "insert_your",
+            "your_api_key",
+            "your-key",
+            "your_key",
+            "replace_me",
+            "changeme",
+            "todo",
+            "example",
+        )
+    )
+
+
+def _looks_like_real_secret(value: str) -> bool:
+    stripped = value.strip()
+    if _looks_like_placeholder_secret(stripped):
+        return False
+    if len(stripped) < 12:
+        return False
+    return bool(re.search(r"[A-Za-z]", stripped) and re.search(r"\d|[_\-]", stripped))
 
 
 def bash(command: str, timeout: int = 30) -> str:
@@ -80,6 +152,12 @@ def bash(command: str, timeout: int = 30) -> str:
     if timeout > 120:
         timeout = 120
     command = _normalize_shell_command(command)
+    if _is_persistent_cd_misuse(command):
+        return (
+            "Note: `cd` by itself only affects this one shell command and will not persist "
+            "to the next tool call. Use `cd target_dir && <command>` in a single bash call, "
+            "or use file tools with paths relative to the selected workspace."
+        )
     if _should_detach_background_command(command):
         return _run_detached_background_command(command)
     try:
@@ -122,7 +200,7 @@ def bash(command: str, timeout: int = 30) -> str:
 
 def _should_detach_background_command(command: str) -> bool:
     lowered = command.lower()
-    if "&" not in command:
+    if not re.search(r"(?<!&)&(?!&)", command):
         return False
     background_markers = (
         "nohup ",
@@ -134,6 +212,12 @@ def _should_detach_background_command(command: str) -> bool:
         "server.py",
     )
     return any(marker in lowered for marker in background_markers)
+
+
+def _is_persistent_cd_misuse(command: str) -> bool:
+    """Detect a bare cd command that the agent may wrongly expect to persist."""
+    stripped = command.strip()
+    return bool(re.fullmatch(r"cd(?:\s+[^;&|]+)?", stripped))
 
 
 def _run_detached_background_command(command: str) -> str:
