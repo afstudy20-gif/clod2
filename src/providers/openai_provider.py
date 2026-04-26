@@ -8,6 +8,7 @@ import re
 from typing import Iterator
 
 import requests
+import httpx
 from openai import APIStatusError, NotFoundError, OpenAI, RateLimitError
 
 from .base import BaseProvider, Message, ToolCall
@@ -131,8 +132,22 @@ class OpenAICompatibleProvider(BaseProvider):
             if exc.status_code == 404:
                 raise RuntimeError(self._format_not_found_error(exc)) from exc
             raise
+        except httpx.RemoteProtocolError as exc:
+            raise RuntimeError(self._format_stream_interrupted_error(exc)) from exc
         except NotFoundError as exc:
             raise RuntimeError(self._format_not_found_error(exc)) from exc
+
+    def _format_stream_interrupted_error(self, exc: Exception) -> str:
+        if isinstance(self, NvidiaProvider):
+            return (
+                f"NVIDIA NIM stream for model '{self.model}' closed before the response finished. "
+                "This is usually a provider/network streaming interruption, not a local file error. "
+                "Retry the request, switch to a smaller/faster model, or shorten the prompt."
+            )
+        return (
+            f"Provider stream for model '{self.model}' closed before the response finished. "
+            "Retry the request or shorten the prompt."
+        )
 
     def _format_rate_limit_error(self, exc: Exception) -> str:
         retry_after = None
@@ -257,7 +272,7 @@ class NvidiaProvider(OpenAICompatibleProvider):
         "microsoft/phi-3-vision-128k-instruct",
         "nvidia/neva-22b",
     }
-    MAX_TOKENS = 8192
+    MAX_TOKENS = 16384
 
     DEFAULT_MODELS = {
         "microsoft/phi-4-multimodal-instruct": "microsoft/phi-4-multimodal-instruct",

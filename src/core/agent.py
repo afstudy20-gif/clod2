@@ -210,17 +210,32 @@ class Agent:
             # Trim history to stay within token budget
             active_history = trim_history(self.history)
 
-            for item in self.provider.stream_response(
-                active_history,
-                tool_schemas,
-                system_prompt,
-            ):
-                if isinstance(item, str):
-                    text_buffer.append(item)
-                    if self.mode not in ("build", "debug"):
-                        yield item
-                elif isinstance(item, ToolCall):
-                    tool_calls_seen.append(item)
+            try:
+                for item in self.provider.stream_response(
+                    active_history,
+                    tool_schemas,
+                    system_prompt,
+                ):
+                    if isinstance(item, str):
+                        text_buffer.append(item)
+                        if self.mode not in ("build", "debug"):
+                            yield item
+                    elif isinstance(item, ToolCall):
+                        tool_calls_seen.append(item)
+            except RuntimeError as exc:
+                if self.mode in ("build", "debug") and self._is_truncation_error(str(exc)):
+                    self.history.append(
+                        Message(
+                            role="user",
+                            content=(
+                                "Your previous output was truncated before a complete tool call. "
+                                "Retry with exactly one minimal structured tool call and no prose. "
+                                "For this task, inspect the CSS/layout file, then edit only the rule needed."
+                            ),
+                        )
+                    )
+                    continue
+                raise
 
             # Fallback: Detect manual JSON tool calls in the text if no structured calls seen
             if not tool_calls_seen and text_buffer:
@@ -614,11 +629,16 @@ class Agent:
 
     def _repeated_tool_call_message(self, call: ToolCall, skipped: bool) -> str:
         prefix = "Skipped repeated process check/cleanup command" if skipped else "Error: Repeated identical tool call blocked"
-        return (
+        message = (
             f"{prefix}: {call.name} {json.dumps(call.arguments, ensure_ascii=False)}. "
             "Do not repeat the same command. If the task is complete, respond with the final summary. "
             "If it is not complete, run the next distinct verification or corrective command."
         )
+        if call.name == "bash":
+            command = str(call.arguments.get("command", ""))
+            if "ts-node" in command and ".ts" in command and "--project" not in command:
+                message += " For TypeScript projects with tsconfig.json, try `npx ts-node --project tsconfig.json <file>.ts`."
+        return message
 
     def _tool_call_key(self, call: ToolCall) -> tuple[str, str]:
         if call.name == "bash" and isinstance(call.arguments, dict):
@@ -664,6 +684,10 @@ class Agent:
             or "direct editing is not supported" in lowered
             or "tool call for edit" in lowered
         )
+
+    def _is_truncation_error(self, text: str) -> bool:
+        lowered = text.lower()
+        return "model output was truncated" in lowered or "finish_reason" in lowered and "length" in lowered
 
     def _parse_function_style_tool_calls(self, text: str) -> list[tuple[str, dict]]:
         """Parse calls like write_file(path="x", content="...") from model text."""

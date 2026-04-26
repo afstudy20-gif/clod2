@@ -1675,7 +1675,7 @@ async function streamAssistant(chat) {
           } else if (ev.error) {
             streamStarted = true;
             resetIdleTimer();
-            fullText += `\n\n**Error:** ${ev.error}`;
+            fullText += `\n\n**Error:** ${formatStreamError(ev.error)}`;
             renderAssistantBody(body, fullText, toolEvents, false);
           }
         } catch {}
@@ -1714,6 +1714,14 @@ function stopGeneration() {
     document.getElementById('send-btn').disabled = false;
     document.getElementById('stop-btn').style.display = 'none';
   }
+}
+
+function formatStreamError(error) {
+  const text = String(error || '');
+  if (text.includes('incomplete chunked read') || text.includes('peer closed connection')) {
+    return 'The model provider closed the stream before the response finished. Retry, use a smaller/faster model, or shorten the request.';
+  }
+  return text;
 }
 
 async function copyAllChat() {

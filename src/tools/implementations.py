@@ -101,6 +101,10 @@ def bash(command: str, timeout: int = 30) -> str:
             recovered = _recover_git_checkout_existing_branch(command, result.stderr, timeout)
             if recovered is not None:
                 return recovered
+        if result.returncode != 0:
+            recovered = _recover_typescript_ts5112(command, output, timeout)
+            if recovered is not None:
+                return recovered
         if result.returncode != 0 and _is_nonfatal_process_probe(command, output):
             output = output.strip()
             return output or "No matching process or listening port found."
@@ -283,6 +287,37 @@ def _recover_git_checkout_existing_branch(command: str, stderr: str, timeout: in
     )
     if retry.returncode != 0:
         return f"Error: {stderr.strip()}\n{note}\n{retry_output}\n[Exit code: {retry.returncode}]"
+    return "\n".join(part for part in [note, retry_output] if part)
+
+
+def _recover_typescript_ts5112(command: str, output: str, timeout: int) -> str | None:
+    """Recover from TS5112 by running ts-node with an explicit project config."""
+    if "TS5112" not in output and "tsconfig.json is present" not in output:
+        return None
+    match = re.search(r"\bnpx\s+ts-node\s+(?!.*--project)([^\s;&|]+\.tsx?)\b", command)
+    if not match:
+        return None
+    file_arg = match.group(1)
+    repaired = command.replace(f"npx ts-node {file_arg}", f"npx ts-node --project tsconfig.json {file_arg}", 1)
+    try:
+        retry = subprocess.run(
+            repaired,
+            shell=True,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            cwd=_project_root,
+            stdin=subprocess.DEVNULL,
+        )
+    except Exception as e:
+        return f"Error: {output.strip()}\nRecovery failed: {e}"
+
+    retry_output = ((retry.stdout or "") + (retry.stderr or "")).strip()
+    note = (
+        "Recovered from TS5112 by running ts-node with `--project tsconfig.json`."
+    )
+    if retry.returncode != 0:
+        return f"Error: {output.strip()}\n{note}\n{retry_output}\n[Exit code: {retry.returncode}]"
     return "\n".join(part for part in [note, retry_output] if part)
 
 
