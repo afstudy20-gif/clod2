@@ -21,6 +21,7 @@ class OpenAICompatibleProvider(BaseProvider):
 
     # Model ID substrings to exclude when fetching live models
     _EXCLUDE_PATTERNS: list[str] = ["embed", "tts", "whisper", "dall-e", "moderation", "audio", "realtime", "transcri"]
+    _EXCLUDE_MODEL_IDS: set[str] = set()
 
     def __init__(self, api_key: str, model: str | None = None, base_url: str | None = None):
         super().__init__(api_key, model)
@@ -44,7 +45,8 @@ class OpenAICompatibleProvider(BaseProvider):
         data = resp.json().get("data", [])
         ids = sorted(
             m["id"] for m in data
-            if not any(ex in m["id"].lower() for ex in cls._EXCLUDE_PATTERNS)
+            if m["id"] not in cls._EXCLUDE_MODEL_IDS
+            and not any(ex in m["id"].lower() for ex in cls._EXCLUDE_PATTERNS)
         )
         return ids if ids else list(cls.DEFAULT_MODELS.values())
 
@@ -78,6 +80,8 @@ class OpenAICompatibleProvider(BaseProvider):
                 raise RuntimeError(self._format_rate_limit_error(exc)) from exc
             if exc.status_code == 404:
                 raise RuntimeError(self._format_not_found_error(exc)) from exc
+            if exc.status_code == 410:
+                raise RuntimeError(self._format_gone_error(exc)) from exc
             raise
         tool_calls_map: dict[int, dict] = {}
 
@@ -131,6 +135,8 @@ class OpenAICompatibleProvider(BaseProvider):
                 raise RuntimeError(self._format_rate_limit_error(exc)) from exc
             if exc.status_code == 404:
                 raise RuntimeError(self._format_not_found_error(exc)) from exc
+            if exc.status_code == 410:
+                raise RuntimeError(self._format_gone_error(exc)) from exc
             raise
         except httpx.RemoteProtocolError as exc:
             raise RuntimeError(self._format_stream_interrupted_error(exc)) from exc
@@ -171,6 +177,24 @@ class OpenAICompatibleProvider(BaseProvider):
                 "moonshotai/kimi-k2-instruct-0905, nvidia/nemotron-3-super-120b-a12b, or nvidia/nemotron-3-nano-30b-a3b if available."
             )
         return f"Provider model/function for '{self.model}' was not found (HTTP 404)."
+
+    def _format_gone_error(self, exc: Exception) -> str:
+        detail = ""
+        response = getattr(exc, "response", None)
+        if response is not None:
+            try:
+                payload = response.json()
+                detail = str(payload.get("detail") or payload.get("title") or "")
+            except Exception:
+                detail = getattr(response, "text", "") or ""
+        if isinstance(self, NvidiaProvider):
+            return (
+                f"NVIDIA NIM model '{self.model}' is no longer available (HTTP 410 Gone). "
+                f"{detail} "
+                "Use Update Models to refresh the live catalog, or switch to qwen/qwen3-coder-480b-a35b-instruct, "
+                "moonshotai/kimi-k2-instruct-0905, nvidia/nemotron-3-super-120b-a12b, or nvidia/nemotron-3-nano-30b-a3b."
+            ).strip()
+        return f"Provider model '{self.model}' is no longer available (HTTP 410 Gone). {detail}".strip()
 
     def _clean_content_delta(self, content: str) -> str:
         return content
@@ -273,6 +297,14 @@ class NvidiaProvider(OpenAICompatibleProvider):
         "nvidia/neva-22b",
     }
     MAX_TOKENS = 16384
+    _EXCLUDE_MODEL_IDS = {
+        "deepseek-ai/deepseek-v3.1",
+        "deepseek-ai/deepseek-r1",
+        "nvidia/llama-3.1-nemotron-ultra-253b-v1",
+        "nvidia/llama-3.3-nemotron-super-49b-v1",
+        "meta/llama-3.1-405b-instruct",
+        "meta/llama-3.3-70b-instruct",
+    }
 
     DEFAULT_MODELS = {
         "microsoft/phi-4-multimodal-instruct": "microsoft/phi-4-multimodal-instruct",
@@ -282,8 +314,6 @@ class NvidiaProvider(OpenAICompatibleProvider):
         "moonshotai/kimi-k2-instruct-0905": "moonshotai/kimi-k2-instruct-0905",
         "nvidia/nemotron-3-super-120b-a12b": "nvidia/nemotron-3-super-120b-a12b",
         "nvidia/nemotron-3-nano-30b-a3b": "nvidia/nemotron-3-nano-30b-a3b",
-        "deepseek-ai/deepseek-v3.1": "deepseek-ai/deepseek-v3.1",
-        "deepseek-ai/deepseek-r1": "deepseek-ai/deepseek-r1",
         "moonshotai/kimi-k2.5": "moonshotai/kimi-k2.5",
     }
 

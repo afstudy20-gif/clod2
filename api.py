@@ -88,7 +88,7 @@ def chat(req: ChatRequest):
                    f"Set the env var or use /config to save it.",
         )
 
-    model = _normalize_requested_model(req.provider, req.model)
+    model = _select_available_model(req.provider, req.model, config)
 
     try:
         provider = get_provider(req.provider, api_key=api_key, model=model)
@@ -268,6 +268,44 @@ def _infer_build_or_debug_mode(message) -> str:
     return "debug" if any(marker in lowered for marker in debug_markers) else "build"
 
 
+def _select_available_model(provider: str, model: str | None, config: dict | None = None) -> str | None:
+    """Choose a currently available model, falling back automatically if needed."""
+    normalized = _normalize_requested_model(provider, model)
+    key = provider.lower()
+    cls = PROVIDERS.get(key)
+    if not cls or not normalized:
+        return normalized
+
+    cached = _live_models.get(key)
+    if cached:
+        return normalized if normalized in cached else _first_model(cached, cls)
+
+    if model and normalized != model:
+        return _first_model(list(cls.DEFAULT_MODELS.values()), cls)
+
+    api_key = get_api_key(key, config or load_config())
+    if not api_key and key not in ("ollama", "local"):
+        return normalized
+
+    try:
+        live = cls.fetch_available_models(api_key or "ollama")
+    except Exception:
+        return normalized
+
+    if live:
+        _live_models[key] = live
+        return normalized if normalized in live else _first_model(live, cls)
+
+    return normalized
+
+
+def _first_model(models: list[str], cls) -> str | None:
+    if models:
+        return models[0]
+    defaults = list(cls.DEFAULT_MODELS.values())
+    return defaults[0] if defaults else None
+
+
 def _normalize_requested_model(provider: str, model: str | None) -> str | None:
     """Avoid sending known-stale model ids to providers."""
     if provider.lower() not in {"nvidia", "nim"} or not model:
@@ -278,6 +316,8 @@ def _normalize_requested_model(provider: str, model: str | None) -> str | None:
         "nvidia/llama-3.3-nemotron-super-49b-v1",
         "meta/llama-3.1-405b-instruct",
         "meta/llama-3.3-70b-instruct",
+        "deepseek-ai/deepseek-v3.1",
+        "deepseek-ai/deepseek-r1",
     }
     if model in stale_nvidia_models:
         return None
