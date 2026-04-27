@@ -882,6 +882,7 @@
           <button class="tool-btn" onclick="manualBash()">Run Bash</button>
           <button class="tool-btn" onclick="manualList()">List Dir</button>
           <button class="tool-btn" onclick="createDevServer()">Create Dev Server</button>
+          <button class="tool-btn" onclick="setupCoolify()">Setup Coolify</button>
           <button class="tool-btn" onclick="addPwa()">Add PWA</button>
           <button class="tool-btn" onclick="applyClodImprovements()">Apply Improvements</button>
           <button class="tool-btn primary" onclick="pushToGithub()">Push GitHub</button>
@@ -1141,15 +1142,19 @@ function formatModeLabel(mode) {
 
 async function pushToGithub() {
   const result = document.getElementById('push-result');
+  const typed = document.getElementById('user-input').value.trim();
+  const remoteUrl = extractGithubUrl(typed);
   result.className = '';
   result.textContent = 'Pushing...';
-  appendQuickToolResult('git push', 'start', 'Pushing current branch to GitHub...');
+  appendQuickToolResult('git push', 'start', remoteUrl ? `Pushing current branch to ${remoteUrl}...` : 'Pushing current branch to GitHub...');
   try {
     const resp = await fetch('/git/push', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         workspace: document.getElementById('workspace-input').value.trim() || null,
+        remote: 'origin',
+        remote_url: remoteUrl || null,
       }),
     });
     const data = await resp.json().catch(() => ({ detail: resp.statusText }));
@@ -1167,6 +1172,11 @@ async function pushToGithub() {
     result.textContent = e.message;
     appendQuickToolResult('git push', 'error', e.message);
   }
+}
+
+function extractGithubUrl(text) {
+  const match = (text || '').match(/https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(?:\.git)?/);
+  return match ? match[0].replace(/\.git$/, '') + '.git' : '';
 }
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -2381,6 +2391,33 @@ function addPwa() {
     '- avoid breaking existing app behavior',
     '- run a quick syntax/build check if available',
     '- report changed files and verification results'
+  ].join('\n');
+  autoResize(input);
+  document.getElementById('mode-select').value = 'build_debug';
+  onModeChange();
+  sendMessage();
+}
+
+function setupCoolify() {
+  const input = document.getElementById('user-input');
+  const typed = input.value.trim();
+  const workspace = document.getElementById('workspace-input').value.trim() || 'the selected workspace';
+  const request = typed || 'Configure this project for Coolify deployment.';
+  input.value = [
+    request,
+    '',
+    `Workspace: ${workspace}`,
+    '',
+    'Configure or fix Coolify deployment for this project:',
+    '- inspect the project type before editing files',
+    '- if it is a static HTML/CSS/JS app, use nginx with Dockerfile and expose port 80',
+    '- do not invent Node/Express server files for a static app',
+    '- if it already has a real app server, keep that stack and use the verified listening port',
+    '- update Dockerfile, .dockerignore, coolify.json/coolify-settings.json, README, or package scripts only when needed',
+    '- never commit .env, API keys, logs, pid files, local databases, build caches, or runtime artifacts',
+    '- verify required files exist and run JSON/package/config checks where possible',
+    '- run docker build only if Docker is installed; otherwise report that Docker was unavailable',
+    '- if GitHub push is requested, commit and push only after verification and report exact git output'
   ].join('\n');
   autoResize(input);
   document.getElementById('mode-select').value = 'build_debug';

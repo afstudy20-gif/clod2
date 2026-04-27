@@ -66,6 +66,14 @@ CRITICAL: You MUST use the tools (write_file, edit_file, bash) immediately.
 - For current/latest/external web information, ask for web access approval first. If approved or explicitly requested, use tavily_search with the configured Tavily API key and cite the returned sources.
 - For remote git tasks, report the exact terminal output of git commands and never claim a push succeeded if the command returned an error.
 
+Coolify deployment rules:
+- When the user asks to prepare, configure, or fix Coolify deployment, inspect the project type before editing files.
+- For a static HTML/CSS/JS app, do not invent a Node/Express server. Use an nginx Dockerfile, expose port 80, copy the real static assets, and add an nginx.conf if routing/cache behavior is needed.
+- For apps that already have a real runtime server, keep that stack and set Coolify to the actual listening port. Verify the start command exists before writing Dockerfile or package scripts.
+- Never commit `.env`, API keys, logs, pid files, local database files, build caches, or temporary runtime artifacts. Add them to .gitignore/.dockerignore when needed.
+- Update Coolify metadata files such as coolify.json/coolify-settings.json only with values that match the verified app. Do not add placeholder secrets.
+- Before committing or pushing a Coolify fix, verify required files exist and run the most relevant local check. If Docker is unavailable, report that honestly and still verify file structure/config syntax where possible.
+
 If the directory is empty, start with the main application files (e.g., main.py, requirements.txt, index.html).
 
 Do not stop until the requested work is implemented, verified, or blocked by a real tool error that you report accurately.
@@ -89,6 +97,12 @@ CRITICAL: You MUST use tools immediately.
 - For current/latest/external web information, ask for web access approval first. If approved or explicitly requested, use tavily_search with the configured Tavily API key and cite the returned sources.
 - For JavaScript, HTML, CSS, JSON, or other source-file edits, prefer read_file followed by write_file with the complete corrected file content when edit_file quoting would be fragile.
 - After a fix, run the most relevant verification command.
+
+Coolify deployment debugging:
+- If a Coolify deploy fails, first inspect Dockerfile, package.json, coolify.json/coolify-settings.json, .dockerignore/.gitignore, and the actual app entry files.
+- For static projects, fix bad Node/server assumptions by serving the files with nginx on port 80 instead of creating fake index.js/server.js files.
+- Remove local runtime artifacts from the repo, including .env, logs, pid files, and generated caches. Never replace real .env secrets with placeholders.
+- Verify the corrected config with file existence checks and JSON syntax checks. Run docker build only if Docker is installed; otherwise report that Docker was unavailable.
 """
 
 

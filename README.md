@@ -152,6 +152,10 @@ python main.py --project /path/to/project
 
 In **explore** and **plan** modes, only read-only tools (read_file, glob, grep, list_dir) are available.
 
+## Deployment Guidance
+
+Clod includes built-in Coolify guidance in Build / Debug mode. When a user asks for Coolify setup, the agent should inspect the project type first, use nginx on port 80 for static HTML/CSS/JS apps, avoid inventing missing Node servers, keep real runtime stacks when they exist, exclude `.env`/logs/pid/runtime files from git and Docker context, and verify the resulting config before commit or push.
+
 ## Markdown Skills
 
 Clod loads project markdown instructions into the agent system prompt from:

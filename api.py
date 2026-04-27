@@ -359,6 +359,7 @@ def _model_supports_images(provider, model: str | None) -> bool:
 class PushRequest(BaseModel):
     workspace: str | None = None
     remote: str = "origin"
+    remote_url: str | None = None
     branch: str | None = None
     force: bool = False
     commit_message: str = "Update from Clod assistant"
@@ -384,31 +385,47 @@ def push_to_github(req: PushRequest):
         return subprocess.run(args, cwd=str(ws_path), capture_output=True, text=True, timeout=60)
 
     try:
+        remote_name = (req.remote or "origin").strip() or "origin"
+        remote_url = (req.remote_url or "").strip()
+
         # Check if it's a git repo
         if not (ws_path / ".git").exists():
             run_cmd(["git", "init"])
-            # If no remote is provided, we can't push, but we can at least init
-            if not req.remote.startswith("http"):
+            if not remote_url:
                 return {"ok": False, "output": "Not a git repository and no remote URL provided."}
-            run_cmd(["git", "remote", "add", "origin", req.remote])
+            run_cmd(["git", "remote", "add", remote_name, remote_url])
+
+        if remote_url:
+            remotes = run_cmd(["git", "remote"]).stdout.split()
+            if remote_name in remotes:
+                run_cmd(["git", "remote", "set-url", remote_name, remote_url])
+            else:
+                run_cmd(["git", "remote", "add", remote_name, remote_url])
         
         # Add all
         run_cmd(["git", "add", "."])
         
         # Commit (only if there are changes)
         check = run_cmd(["git", "status", "--porcelain"])
-        if not check.stdout.strip():
-            return {"ok": True, "output": "No changes to commit"}
-            
-        run_cmd(["git", "commit", "-m", req.commit_message])
+        committed = False
+        if check.stdout.strip():
+            commit_proc = run_cmd(["git", "commit", "-m", req.commit_message])
+            if commit_proc.returncode != 0:
+                return {"ok": False, "output": commit_proc.stderr or commit_proc.stdout or "Commit failed"}
+            committed = True
         
         # Push
         res = run_cmd(["git", "branch", "--show-current"])
         branch = req.branch or res.stdout.strip() or "main"
-        
-        proc = run_cmd(["git", "push", req.remote, branch, "--force" if req.force else ""])
+
+        push_args = ["git", "push", remote_name, f"HEAD:{branch}"]
+        if req.force:
+            push_args.append("--force")
+        proc = run_cmd(push_args)
         if proc.returncode == 0:
-            return {"ok": True, "output": proc.stdout or f"Successfully pushed to GitHub ({branch})"}
+            prefix = "Committed and pushed." if committed else "No local changes to commit; pushed existing commits."
+            output = proc.stdout or proc.stderr or f"Successfully pushed to GitHub ({branch})"
+            return {"ok": True, "output": f"{prefix}\n{output}"}
         else:
             return {"ok": False, "output": proc.stderr or "Push failed"}
 
