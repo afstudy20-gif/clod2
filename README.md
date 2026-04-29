@@ -18,11 +18,38 @@ A terminal-based AI coding assistant (Claude Code alternative) that works with *
 
 ### 1. Install
 
+#### Local Installation (macOS/Linux)
+
+For **native folder browsing** and full filesystem access, run Clod locally:
+
+```bash
+# Clone the repository
+git clone <repository-url> clod-agent
+cd clod-agent
+
+# Create virtual environment
+python3 -m venv venv
+source venv/bin/activate  # On macOS/Linux
+# or on Windows: venv\Scripts\activate
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Optional: Install as a command
+pip install -e .
+```
+
+#### Hosted/Linux Deployment
+
+On hosted deployments or containers without native folder browsing:
+
 ```bash
 pip install -r requirements.txt
 # or install as a command:
 pip install -e .
 ```
+
+**Note:** Native folder browsing is only available when Clod runs locally on macOS. On hosted/Linux deployments, you must manually enter workspace paths (e.g., `/workspace`, `/app`).
 
 ### 2. Set API Keys
 
