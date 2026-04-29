@@ -1,9 +1,1 @@
-.env
-__pycache__/
-*.pyc
-*.pyo
-*.egg-info/
-dist/
-build/
-.venv/
-venv/
+Nothing should be ignored based on the provided file changes, as they only include source files (.py) and documentation (.md).

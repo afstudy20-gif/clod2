@@ -82,6 +82,12 @@ python main.py --project /path/to/project
 |---------|-------------|
 | `/explore` | Toggle explore mode — read-only tools, explains code |
 | `/plan <request>` | Plan mode — explores, produces plan, asks approval, then executes |
+| `/design <request>` | Design mode — architects solutions, creates technical specifications, API designs |
+| `/refactor <request>` | Refactor mode — improves code quality without changing behavior |
+| `/test <request>` | Test mode — writes comprehensive tests and runs verification |
+| `/security <request>` | Security audit mode — identifies vulnerabilities and suggests fixes |
+| `/build <request>` | Build mode — implements features and creates files |
+| `/debug <request>` | Debug mode — diagnoses and fixes bugs |
 | `/normal` | Return to normal mode |
 | `/permissions` | Show available tools by mode |
 
@@ -135,14 +141,21 @@ python main.py --project /path/to/project
 | Tool | Description | Mode |
 |------|-------------|------|
 | `read_file` | Read file contents with line numbers | all |
-| `write_file` | Create or overwrite a file | normal only |
-| `edit_file` | Replace a unique string in a file | normal only |
-| `bash` | Run shell commands | normal only |
+| `write_file` | Create or overwrite a file | action modes |
+| `edit_file` | Replace a unique string in a file | action modes |
+| `bash` | Run shell commands | action modes |
 | `glob` | Find files by pattern (e.g. `**/*.py`) | all |
 | `grep` | Search file contents with regex | all |
 | `list_dir` | List directory contents | all |
+| `git_*` | Git operations (status, add, commit, push, etc.) | action modes |
+| `github_*` | GitHub API operations | action modes |
 
-In **explore** and **plan** modes, only read-only tools (read_file, glob, grep, list_dir) are available.
+### Mode Categories
+
+- **Analysis modes** (read-only tools): `/explore`, `/plan`, `/design`, `/security`
+- **Action modes** (all tools): `/normal`, `/build`, `/debug`, `/refactor`, `/test`
+
+In analysis modes, only read-only tools (read_file, glob, grep, list_dir, github_read_file, github_list_dir, github_search_code) are available.
 
 ## Markdown Skills
 
