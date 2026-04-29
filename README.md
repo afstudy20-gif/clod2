@@ -8,7 +8,10 @@ A terminal-based AI coding assistant (Claude Code alternative) that works with *
 - **Agentic tool use**: reads/writes/edits files, runs bash commands, searches code
 - **Session resume**: Save and load conversation history across restarts
 - **Project-aware**: Auto-detects project root, resolves paths relative to it
-- **Modes**: Normal, Explore (read-only), and Plan (plan then execute)
+- **Context Awareness**: Tracks recent actions to avoid loops and build on previous results
+- **Image Support**: Analyzes screenshots, diagrams, and UI mockups for debugging
+- **Advanced Debugging**: Systematic 7-step algorithm with loop prevention
+- **Modes**: Normal, Explore (read-only), Plan, Build, Debug, Design, Refactor, Test, Security Audit
 - **Loop mode**: Run prompts on a recurring interval
 - **Interactive model picker**: Browse and switch models easily
 - **Streaming**: Responses stream in real time with tool execution indicators
@@ -18,11 +21,38 @@ A terminal-based AI coding assistant (Claude Code alternative) that works with *
 
 ### 1. Install
 
+#### Local Installation (macOS/Linux)
+
+For **native folder browsing** and full filesystem access, run Clod locally:
+
+```bash
+# Clone the repository
+git clone <repository-url> clod-agent
+cd clod-agent
+
+# Create virtual environment
+python3 -m venv venv
+source venv/bin/activate  # On macOS/Linux
+# or on Windows: venv\Scripts\activate
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Optional: Install as a command
+pip install -e .
+```
+
+#### Hosted/Linux Deployment
+
+On hosted deployments or containers without native folder browsing:
+
 ```bash
 pip install -r requirements.txt
 # or install as a command:
 pip install -e .
 ```
+
+**Note:** Native folder browsing is only available when Clod runs locally on macOS. On hosted/Linux deployments, you must manually enter workspace paths (e.g., `/workspace`, `/app`).
 
 ### 2. Set API Keys
 
@@ -82,8 +112,46 @@ python main.py --project /path/to/project
 |---------|-------------|
 | `/explore` | Toggle explore mode — read-only tools, explains code |
 | `/plan <request>` | Plan mode — explores, produces plan, asks approval, then executes |
+| `/design <request>` | Design mode — architects solutions, creates technical specifications, API designs |
+| `/refactor <request>` | Refactor mode — improves code quality without changing behavior |
+| `/test <request>` | Test mode — writes comprehensive tests and runs verification |
+| `/security <request>` | Security audit mode — identifies vulnerabilities and suggests fixes |
+| `/build <request>` | Build mode — implements features and creates files |
+| `/debug <request>` | Debug mode — diagnoses and fixes bugs with systematic algorithm |
 | `/normal` | Return to normal mode |
 | `/permissions` | Show available tools by mode |
+
+### Image Support
+
+Attach screenshots, diagrams, or mockups to your messages. The agent will:
+- Extract error messages, stack traces, and line numbers from screenshots
+- Identify UI layout issues, color mismatches, missing elements
+- Compare implementation against design mockups
+- Use visual context to guide debugging and implementation decisions
+
+### Context Awareness & Loop Prevention
+
+The agent now tracks recent actions to maintain context across turns:
+- **Recent Action Tracking**: Last 10 actions are summarized and shown before each response
+- **Build on Results**: Each new action considers what was learned from previous results
+- **Loop Prevention**: Automatically detects and prevents repeating the same checks
+- **Context Summary**: Shows ✓/✗ status of recent actions with brief results
+
+This prevents the common problem of agents making the same tool calls repeatedly without learning from previous results.
+
+### Improved Debugging Algorithm
+
+The debug mode now follows a systematic approach to prevent loops:
+
+1. **Analyze** - Review user input and any provided images FIRST
+2. **Hypothesize** - Form ONE clear hypothesis about root cause
+3. **Test** - Run ONE targeted check to validate/refute hypothesis
+4. **Learn** - Analyze results: what did this tell me?
+5. **Iterate** - Form NEW hypothesis if needed (never repeat checks)
+6. **Fix** - Apply targeted fix once root cause confirmed
+7. **Verify** - Run verification command to prove fix works
+
+**Anti-loop protection:** The agent tracks what it has already checked and avoids repeating actions like re-reading files, re-listing directories, or re-running failing commands.
 
 ### Sessions
 | Command | Description |
@@ -135,14 +203,21 @@ python main.py --project /path/to/project
 | Tool | Description | Mode |
 |------|-------------|------|
 | `read_file` | Read file contents with line numbers | all |
-| `write_file` | Create or overwrite a file | normal only |
-| `edit_file` | Replace a unique string in a file | normal only |
-| `bash` | Run shell commands | normal only |
+| `write_file` | Create or overwrite a file | action modes |
+| `edit_file` | Replace a unique string in a file | action modes |
+| `bash` | Run shell commands | action modes |
 | `glob` | Find files by pattern (e.g. `**/*.py`) | all |
 | `grep` | Search file contents with regex | all |
 | `list_dir` | List directory contents | all |
+| `git_*` | Git operations (status, add, commit, push, etc.) | action modes |
+| `github_*` | GitHub API operations | action modes |
 
-In **explore** and **plan** modes, only read-only tools (read_file, glob, grep, list_dir) are available.
+### Mode Categories
+
+- **Analysis modes** (read-only tools): `/explore`, `/plan`, `/design`, `/security`
+- **Action modes** (all tools): `/normal`, `/build`, `/debug`, `/refactor`, `/test`
+
+In analysis modes, only read-only tools (read_file, glob, grep, list_dir, github_read_file, github_list_dir, github_search_code) are available.
 
 ## Markdown Skills
 
