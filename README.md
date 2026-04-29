@@ -8,7 +8,10 @@ A terminal-based AI coding assistant (Claude Code alternative) that works with *
 - **Agentic tool use**: reads/writes/edits files, runs bash commands, searches code
 - **Session resume**: Save and load conversation history across restarts
 - **Project-aware**: Auto-detects project root, resolves paths relative to it
-- **Modes**: Normal, Explore (read-only), and Plan (plan then execute)
+- **Context Awareness**: Tracks recent actions to avoid loops and build on previous results
+- **Image Support**: Analyzes screenshots, diagrams, and UI mockups for debugging
+- **Advanced Debugging**: Systematic 7-step algorithm with loop prevention
+- **Modes**: Normal, Explore (read-only), Plan, Build, Debug, Design, Refactor, Test, Security Audit
 - **Loop mode**: Run prompts on a recurring interval
 - **Interactive model picker**: Browse and switch models easily
 - **Streaming**: Responses stream in real time with tool execution indicators
@@ -114,9 +117,41 @@ python main.py --project /path/to/project
 | `/test <request>` | Test mode — writes comprehensive tests and runs verification |
 | `/security <request>` | Security audit mode — identifies vulnerabilities and suggests fixes |
 | `/build <request>` | Build mode — implements features and creates files |
-| `/debug <request>` | Debug mode — diagnoses and fixes bugs |
+| `/debug <request>` | Debug mode — diagnoses and fixes bugs with systematic algorithm |
 | `/normal` | Return to normal mode |
 | `/permissions` | Show available tools by mode |
+
+### Image Support
+
+Attach screenshots, diagrams, or mockups to your messages. The agent will:
+- Extract error messages, stack traces, and line numbers from screenshots
+- Identify UI layout issues, color mismatches, missing elements
+- Compare implementation against design mockups
+- Use visual context to guide debugging and implementation decisions
+
+### Context Awareness & Loop Prevention
+
+The agent now tracks recent actions to maintain context across turns:
+- **Recent Action Tracking**: Last 10 actions are summarized and shown before each response
+- **Build on Results**: Each new action considers what was learned from previous results
+- **Loop Prevention**: Automatically detects and prevents repeating the same checks
+- **Context Summary**: Shows ✓/✗ status of recent actions with brief results
+
+This prevents the common problem of agents making the same tool calls repeatedly without learning from previous results.
+
+### Improved Debugging Algorithm
+
+The debug mode now follows a systematic approach to prevent loops:
+
+1. **Analyze** - Review user input and any provided images FIRST
+2. **Hypothesize** - Form ONE clear hypothesis about root cause
+3. **Test** - Run ONE targeted check to validate/refute hypothesis
+4. **Learn** - Analyze results: what did this tell me?
+5. **Iterate** - Form NEW hypothesis if needed (never repeat checks)
+6. **Fix** - Apply targeted fix once root cause confirmed
+7. **Verify** - Run verification command to prove fix works
+
+**Anti-loop protection:** The agent tracks what it has already checked and avoids repeating actions like re-reading files, re-listing directories, or re-running failing commands.
 
 ### Sessions
 | Command | Description |
