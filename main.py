@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Clod - A multi-provider AI coding assistant (Claude Code alternative)
+Clod - A multi-provider AI coding assistant
 
-Supports: Anthropic Claude, OpenAI ChatGPT, Google Gemini, Groq, Mistral, DeepSeek, NVIDIA NIM, Tavily, Ollama, Cohere
+Supports: Anthropic, OpenAI ChatGPT, Google Gemini, Groq, Mistral, DeepSeek, NVIDIA NIM, Tavily, Ollama, Cohere
 """
 import os
 import sys
@@ -51,20 +51,19 @@ from src.tools.implementations import glob_files, grep_search, list_dir, read_fi
 console = Console()
 output_lock = threading.Lock()
 
-HISTORY_FILE = os.path.expanduser("~/.cclaude/history")
+HISTORY_FILE = os.path.expanduser("~/.clod/history")
 os.makedirs(os.path.dirname(HISTORY_FILE), exist_ok=True)
 
 BANNER = """
-  ██████╗ ██████╗██╗      █████╗ ██╗   ██╗██████╗ ███████╗
- ██╔════╝██╔════╝██║     ██╔══██╗██║   ██║██╔══██╗██╔════╝
- ██║     ██║     ██║     ███████║██║   ██║██║  ██║█████╗
- ██║     ██║     ██║     ██╔══██║██║   ██║██║  ██║██╔══╝
- ╚██████╗╚██████╗███████╗██║  ██║╚██████╔╝██████╔╝███████╗
-  ╚═════╝ ╚═════╝╚══════╝╚═╝  ╚═╝ ╚═════╝ ╚═════╝ ╚══════╝
+  ██████╗██╗      ██████╗ ██████╗
+ ██╔════╝██║     ██╔═══██╗██╔══██╗
+ ██║     ██║     ██║   ██║██║  ██║
+ ██║     ██║     ██║   ██║██║  ██║
+ ╚██████╗███████╗╚██████╔╝██████╔╝
+  ╚═════╝╚══════╝ ╚═════╝ ╚═════╝
 """
 
 PROVIDER_COLORS = {
-    "claude": "green",
     "anthropic": "green",
     "openai": "cyan",
     "chatgpt": "cyan",
@@ -99,7 +98,7 @@ def print_banner(provider_name: str, model: str, project_root: str | None = None
 
 def get_prompt_style(provider_name: str) -> Style:
     color_map = {
-        "claude": "#00aa00", "anthropic": "#00aa00",
+        "anthropic": "#00aa00",
         "openai": "#00aaaa", "chatgpt": "#00aaaa", "gpt": "#00aaaa",
         "gemini": "#0088ff", "google": "#0088ff",
         "groq": "#cc00cc",
@@ -194,7 +193,7 @@ def print_help():
   /exit or /quit           Exit
 
 [bold]Providers:[/bold]
-  claude / anthropic  →  Anthropic Claude models
+  anthropic           →  Anthropic models
   openai / chatgpt    →  OpenAI GPT models
   gemini / google     →  Google Gemini models
   openrouter          →  Many models via single sign-in (OAuth)
@@ -259,7 +258,7 @@ def _set_project_root(path: str, agent: Agent) -> tuple[str | None, str | None]:
 
 
 @click.command()
-@click.option("--provider", "-p", default="claude", help="AI provider: claude, openai, gemini")
+@click.option("--provider", "-p", default="anthropic", help="AI provider: anthropic, openai, gemini")
 @click.option("--model", "-m", default=None, help="Model name (provider-specific)")
 @click.option("--key", "-k", default=None, help="API key (overrides env var)")
 @click.option("--set-key", is_flag=True, help="Save API key to config")
@@ -290,7 +289,7 @@ def main(
         console.print(
             f"[red]No API key found for provider '{provider}'.[/red]\n"
             f"Set the environment variable or use --key YOUR_API_KEY\n"
-            f"  Claude:  export ANTHROPIC_API_KEY=...\n"
+            f"  Anthropic: export ANTHROPIC_API_KEY=...\n"
             f"  OpenAI:  export OPENAI_API_KEY=...\n"
             f"  Gemini:  export GOOGLE_API_KEY=...\n"
             f"  NVIDIA: export NVIDIA_API_KEY=...\n"
@@ -758,7 +757,6 @@ def main(
             elif cmd == "/memory":
                 root = proj_root or os.getcwd()
                 agents_path = os.path.join(root, "AGENTS.md")
-                claude_path = os.path.join(root, "CLAUDE.md")
                 if arg.startswith("add "):
                     note = arg[4:].strip()
                     if not note:
@@ -775,7 +773,7 @@ def main(
                             found = True
                             console.print(Panel(read_file(path), title=rel, border_style="cyan"))
                     if not found:
-                        console.print("[dim]No AGENTS.md, CLAUDE.md, or skills/*/SKILL.md found. Use /init to create AGENTS.md.[/dim]")
+                        console.print("[dim]No AGENTS.md, CLOD.md, or skills/*/SKILL.md found. Use /init to create AGENTS.md.[/dim]")
 
             elif cmd == "/skills":
                 root = proj_root or os.getcwd()

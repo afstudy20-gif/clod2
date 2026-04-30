@@ -3,7 +3,8 @@
   "displayName": "Clod Agent",
   "description": "Native VSCode agent panel for the Clod local coding assistant.",
   "version": "0.1.0",
-  "publisher": "local",
+  "publisher": "yusuf-hosoglu",
+  "author": "Yusuf Hosoglu",
   "engines": {
     "vscode": "^1.90.0"
   },
@@ -36,17 +37,17 @@
       "properties": {
         "clod.serverUrl": {
           "type": "string",
-          "default": "http://127.0.0.1:8000",
+          "default": "http://127.0.0.1:8010",
           "description": "URL of the local Clod FastAPI backend."
         },
         "clod.backendPath": {
           "type": "string",
-          "default": "",
-          "description": "Path to the Clod backend repository. Empty means the parent folder of this extension."
+          "default": "/Users/yh/Desktop/clod2/clod-agent",
+          "description": "Path to the Clod backend repository folder containing api.py."
         },
         "clod.pythonPath": {
           "type": "string",
-          "default": "python3",
+          "default": "/Users/yh/Desktop/clod2/venv/bin/python",
           "description": "Python executable used to start uvicorn."
         },
         "clod.defaultProvider": {

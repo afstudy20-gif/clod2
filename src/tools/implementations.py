@@ -1,9 +1,12 @@
 """Tool implementations - filesystem, shell, and search operations."""
 import fnmatch
+import json
 import os
 import platform
 import re
+import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 
 # Project root for resolving relative paths
@@ -54,6 +57,122 @@ def write_file(path: str, content: str) -> str:
         return f"Written {len(content)} bytes to {path}"
     except Exception as e:
         return f"Error writing file: {e}"
+
+
+def scaffold_macos_app(
+    app_name: str = "Clod App",
+    app_dir: str = "desktop-app",
+    backend_command: str = "",
+    start_url: str = "",
+    health_path: str = "",
+    port: int = 8765,
+    overwrite: bool = False,
+) -> str:
+    """Create an Electron macOS desktop wrapper for the selected project."""
+    root = Path(_project_root or os.getcwd()).resolve()
+    target = Path(app_dir).expanduser()
+    if not target.is_absolute():
+        target = root / target
+    target = target.resolve()
+    if target.exists() and any(target.iterdir()) and not overwrite:
+        return (
+            f"Error: {app_dir} already exists and is not empty. "
+            "Call again with overwrite=true if you want to replace the scaffold files."
+        )
+
+    command = backend_command.strip() or _infer_macos_backend_command(root)
+    resolved_port = max(1, min(int(port or 8765), 65535))
+    url = start_url.strip() or f"http://127.0.0.1:{{port}}"
+    health_url = ""
+    if health_path.strip():
+        health_url = _join_local_url(url, health_path.strip())
+    elif (root / "api.py").exists():
+        health_url = _join_local_url(url, "/health")
+
+    target.mkdir(parents=True, exist_ok=True)
+    scripts_dir = root / "scripts"
+    scripts_dir.mkdir(parents=True, exist_ok=True)
+
+    package = _macos_package_json(app_name, app_dir)
+    (target / "package.json").write_text(json.dumps(package, indent=2) + "\n", encoding="utf-8")
+    (target / "main.js").write_text(
+        _macos_main_js(app_name, command, url, health_url, resolved_port),
+        encoding="utf-8",
+    )
+    (target / "README.md").write_text(
+        _macos_readme(app_name, app_dir, command, url),
+        encoding="utf-8",
+    )
+
+    setup_script = scripts_dir / "setup-macos-app.sh"
+    setup_script.write_text(_macos_setup_script(app_dir), encoding="utf-8")
+    setup_script.chmod(0o755)
+    _ensure_gitignore_entries(root, [f"{app_dir}/node_modules/", f"{app_dir}/dist/"])
+
+    changed = [
+        str((target / "package.json").relative_to(root)),
+        str((target / "main.js").relative_to(root)),
+        str((target / "README.md").relative_to(root)),
+        str(setup_script.relative_to(root)),
+    ]
+    return (
+        "Created macOS Electron app scaffold.\n"
+        f"App name: {app_name}\n"
+        f"Backend command: {command or '(none; loads start_url directly)'}\n"
+        f"Start URL: {url}\n"
+        f"Health URL: {health_url or '(disabled)'}\n"
+        "Changed files:\n- "
+        + "\n- ".join(changed)
+        + "\n\nNext steps:\n"
+        f"1. bash scripts/setup-macos-app.sh\n"
+        f"2. open {app_dir}/dist/mac-arm64/{_safe_product_name(app_name)}.app"
+    )
+
+
+def execute_sandbox_python(code: str) -> str:
+    """Executes Python code safely inside a disconnected, temporary Docker container."""
+    # Ensure docker is available
+    if not shutil.which("docker"):
+        return "Error: Docker is not installed or not in PATH. Sandbox execution requires Docker."
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        temp_file_path = os.path.join(temp_dir, "agent_script.py")
+        
+        with open(temp_file_path, 'w', encoding='utf-8') as f:
+            f.write(code)
+            
+        try:
+            docker_command = [
+                "docker", "run", 
+                "--rm", 
+                "--network", "none", 
+                "--memory", "256m", 
+                "--cpus", "0.5", 
+                "-v", f"{temp_dir}:/sandbox:ro", 
+                "-w", "/sandbox", 
+                "python:3.10-slim", 
+                "python", "agent_script.py"
+            ]
+            
+            result = subprocess.run(
+                docker_command,
+                capture_output=True,
+                text=True,
+                timeout=15 
+            )
+            
+            output = result.stdout.strip()
+            errors = result.stderr.strip()
+            
+            if result.returncode == 0:
+                return f"Execution successful (Sandboxed).\\nOutput:\\n{output}"
+            else:
+                return f"Execution failed.\\nError:\\n{errors}"
+                
+        except subprocess.TimeoutExpired:
+            return "Error: Code execution took too long and was terminated by the sandbox."
+        except Exception as e:
+            return f"Sandbox system error: {str(e)}"
 
 
 def edit_file(path: str, old_string: str, new_string: str) -> str:
@@ -385,6 +504,62 @@ def grep_search(
     return "\n".join(results)
 
 
+def github_sync(commit_message: str, branch_name: str = "main", remote_url: str | None = None) -> str:
+    """Advanced Git sync: pulls before pushing, handles new repos, and manages conflicts."""
+    def run_cmd(cmd: str) -> tuple[int, str, str]:
+        cwd = _project_root or os.getcwd()
+        result = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, shell=True)
+        return result.returncode, result.stdout.strip(), result.stderr.strip()
+
+    try:
+        # Check if it is a git repository
+        code, out, err = run_cmd("git rev-parse --is-inside-work-tree")
+        is_existing_repo = (code == 0)
+
+        if not is_existing_repo:
+            if not remote_url:
+                return "Error: This is not a git repository. Provide a remote_url to initialize and sync."
+            run_cmd("git init")
+            run_cmd(f"git branch -M {branch_name}")
+            run_cmd(f"git remote add origin {remote_url}")
+        else:
+            # For existing repos, pull first to avoid conflicts with human developers
+            # Use --rebase to keep a clean history
+            pull_code, pull_out, pull_err = run_cmd(f"git pull --rebase origin {branch_name}")
+            if pull_code != 0:
+                lowered_err = pull_err.lower()
+                if "could not resolve host" in lowered_err or "access denied" in lowered_err:
+                    return f"Error: Connectivity or access issue during pull. {pull_err}"
+                # If there is a merge conflict, stop and tell the AI
+                if "conflict" in pull_out.lower() or "conflict" in pull_err.lower():
+                    run_cmd("git rebase --abort")
+                    return f"Error: Git pull resulted in a merge conflict. Cannot sync automatically. {pull_err}"
+
+        # Stage all changes
+        run_cmd("git add .")
+        
+        # Check if there is anything to commit
+        code, out, err = run_cmd("git status --porcelain")
+        if not out:
+            return "Everything is up to date. Nothing to commit."
+
+        # Commit
+        safe_message = commit_message.replace('"', '\\"')
+        code, out, err = run_cmd(f'git commit -m "{safe_message}"')
+        if code != 0:
+             return f"Commit failed: {err}"
+        
+        # Push
+        code, out, err = run_cmd(f"git push -u origin {branch_name}")
+        if code != 0: 
+            return f"Push failed. Check authentication or branch names. Error: {err}"
+
+        return f"Success! Code synced to GitHub on branch '{branch_name}'."
+
+    except Exception as e:
+        return f"Unexpected Git error: {str(e)}"
+
+
 def list_dir(path: str = ".") -> str:
     """List directory contents."""
     p = _resolve_path(path)
@@ -407,3 +582,383 @@ def list_dir(path: str = ".") -> str:
         return "\n".join(lines) or "(empty directory)"
     except Exception as e:
         return f"Error: {e}"
+
+
+def _infer_macos_backend_command(root: Path) -> str:
+    if (root / "api.py").exists():
+        return "python3 -m uvicorn api:app --host 127.0.0.1 --port {port}"
+
+    package_json = root / "package.json"
+    if package_json.exists():
+        try:
+            data = json.loads(package_json.read_text(encoding="utf-8"))
+            scripts = data.get("scripts", {})
+        except Exception:
+            scripts = {}
+        if "dev" in scripts:
+            return "PORT={port} npm run dev"
+        if "start" in scripts:
+            return "PORT={port} npm start"
+
+    return ""
+
+
+def _join_local_url(base: str, path_part: str) -> str:
+    if path_part.startswith("http://") or path_part.startswith("https://"):
+        return path_part
+    return base.rstrip("/") + "/" + path_part.lstrip("/")
+
+
+def _safe_product_name(name: str) -> str:
+    cleaned = re.sub(r"[^A-Za-z0-9 ._-]+", "", name).strip()
+    return cleaned or "Clod App"
+
+
+def _safe_app_id(name: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-") or "clod-app"
+    return f"com.clod.{slug}"
+
+
+def _macos_package_json(app_name: str, app_dir: str) -> dict:
+    product_name = _safe_product_name(app_name)
+    return {
+        "name": re.sub(r"[^a-z0-9-]+", "-", product_name.lower()).strip("-") or "clod-app",
+        "version": "0.1.0",
+        "description": f"macOS desktop shell for {product_name}",
+        "main": "main.js",
+        "private": True,
+        "scripts": {
+            "start": "electron .",
+            "package:mac": "electron-builder --mac --dir",
+            "dist:mac": "electron-builder --mac dmg zip",
+        },
+        "build": {
+            "appId": _safe_app_id(product_name),
+            "productName": product_name,
+            "mac": {
+                "category": "public.app-category.developer-tools",
+                "target": ["dir", "dmg", "zip"],
+            },
+            "files": ["main.js", "package.json"],
+            "extraResources": [
+                {
+                    "from": "../",
+                    "to": "app",
+                    "filter": [
+                        "**/*",
+                        f"!{app_dir}/**",
+                        "!node_modules/**",
+                        "!.git/**",
+                        "!venv/**",
+                        "!.venv/**",
+                        "!__pycache__/**",
+                        "!*.pyc",
+                        "!.DS_Store",
+                    ],
+                }
+            ],
+        },
+        "devDependencies": {
+            "electron": "^30.5.1",
+            "electron-builder": "^24.13.3",
+        },
+    }
+
+
+def _macos_main_js(app_name: str, backend_command: str, start_url: str, health_url: str, port: int) -> str:
+    product = _safe_product_name(app_name)
+    return f'''const {{ app, BrowserWindow, Menu, dialog, shell }} = require("electron");
+const {{ spawn }} = require("child_process");
+const fs = require("fs");
+const net = require("net");
+const path = require("path");
+
+const PRODUCT_NAME = {json.dumps(product)};
+const DEFAULT_PORT = Number(process.env.MACOS_APP_PORT || {port});
+const BACKEND_COMMAND = {json.dumps(backend_command)};
+const START_URL_TEMPLATE = {json.dumps(start_url)};
+const HEALTH_URL_TEMPLATE = {json.dumps(health_url)};
+
+let backendProcess = null;
+let mainWindow = null;
+
+function appRoot() {{
+  if (app.isPackaged) return path.join(process.resourcesPath, "app");
+  return path.resolve(__dirname, "..");
+}}
+
+function renderTemplate(value, port) {{
+  return String(value || "").replace(/\\{{port\\}}/g, String(port));
+}}
+
+function isPortOpen(port) {{
+  return new Promise((resolve) => {{
+    const socket = net.createConnection({{ host: "127.0.0.1", port }});
+    socket.once("connect", () => {{
+      socket.destroy();
+      resolve(true);
+    }});
+    socket.once("error", () => resolve(false));
+    socket.setTimeout(500, () => {{
+      socket.destroy();
+      resolve(false);
+    }});
+  }});
+}}
+
+async function findPort(startPort) {{
+  for (let port = startPort; port < startPort + 50; port += 1) {{
+    if (!(await isPortOpen(port))) return port;
+  }}
+  throw new Error(`No free localhost port found near ${{startPort}}`);
+}}
+
+async function sleep(ms) {{
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}}
+
+async function waitForHealth(url, timeoutMs = 30000) {{
+  if (!url) {{
+    await sleep(1800);
+    return;
+  }}
+  const startedAt = Date.now();
+  let lastError = "";
+  while (Date.now() - startedAt < timeoutMs) {{
+    try {{
+      const response = await fetch(url);
+      if (response.ok) return;
+      lastError = `HTTP ${{response.status}}`;
+    }} catch (error) {{
+      lastError = error.message;
+    }}
+    await sleep(500);
+  }}
+  throw new Error(`Backend did not become healthy: ${{lastError}}`);
+}}
+
+async function startBackend() {{
+  if (!BACKEND_COMMAND) return renderTemplate(START_URL_TEMPLATE, DEFAULT_PORT);
+
+  const port = await findPort(DEFAULT_PORT);
+  const root = appRoot();
+  const command = renderTemplate(BACKEND_COMMAND, port);
+  const startUrl = renderTemplate(START_URL_TEMPLATE, port);
+  const healthUrl = renderTemplate(HEALTH_URL_TEMPLATE, port);
+  const env = {{ ...process.env, PORT: String(port), PYTHONUNBUFFERED: "1" }};
+
+  backendProcess = spawn(command, {{
+    cwd: root,
+    env,
+    shell: true,
+    stdio: ["ignore", "pipe", "pipe"]
+  }});
+
+  backendProcess.stdout.on("data", (data) => process.stdout.write(`[app-backend] ${{data}}`));
+  backendProcess.stderr.on("data", (data) => process.stderr.write(`[app-backend] ${{data}}`));
+  await waitForHealth(healthUrl);
+  return startUrl;
+}}
+
+function createMenu() {{
+  const template = [
+    {{
+      label: PRODUCT_NAME,
+      submenu: [
+        {{ role: "about" }},
+        {{ type: "separator" }},
+        {{ role: "quit" }}
+      ]
+    }},
+    {{
+      label: "Edit",
+      submenu: [
+        {{ role: "undo" }},
+        {{ role: "redo" }},
+        {{ type: "separator" }},
+        {{ role: "cut" }},
+        {{ role: "copy" }},
+        {{ role: "paste" }},
+        {{ role: "pasteAndMatchStyle" }},
+        {{ role: "delete" }},
+        {{ type: "separator" }},
+        {{ role: "selectAll" }}
+      ]
+    }},
+    {{
+      label: "View",
+      submenu: [
+        {{ role: "reload" }},
+        {{ role: "forceReload" }},
+        {{ type: "separator" }},
+        {{ role: "toggleDevTools" }},
+        {{ type: "separator" }},
+        {{ role: "resetZoom" }},
+        {{ role: "zoomIn" }},
+        {{ role: "zoomOut" }}
+      ]
+    }},
+    {{
+      label: "Help",
+      submenu: [
+        {{ label: "Open Project Folder", click: () => shell.openPath(appRoot()) }}
+      ]
+    }}
+  ];
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+}}
+
+function installContextMenu(win) {{
+  win.webContents.on("context-menu", (_event, params) => {{
+    const template = [];
+    if (params.isEditable) {{
+      template.push(
+        {{ role: "undo", enabled: params.editFlags.canUndo }},
+        {{ role: "redo", enabled: params.editFlags.canRedo }},
+        {{ type: "separator" }},
+        {{ role: "cut", enabled: params.editFlags.canCut }},
+        {{ role: "copy", enabled: params.editFlags.canCopy }},
+        {{ role: "paste", enabled: params.editFlags.canPaste }},
+        {{ role: "pasteAndMatchStyle", enabled: params.editFlags.canPaste }},
+        {{ role: "delete", enabled: params.editFlags.canDelete }},
+        {{ type: "separator" }},
+        {{ role: "selectAll", enabled: params.editFlags.canSelectAll }}
+      );
+    }} else {{
+      template.push(
+        {{ role: "copy", enabled: params.selectionText.length > 0 }},
+        {{ role: "selectAll" }}
+      );
+    }}
+    Menu.buildFromTemplate(template).popup({{ window: win }});
+  }});
+}}
+
+async function createWindow() {{
+  mainWindow = new BrowserWindow({{
+    width: 1280,
+    height: 860,
+    minWidth: 900,
+    minHeight: 640,
+    title: PRODUCT_NAME,
+    backgroundColor: "#101114",
+    webPreferences: {{
+      contextIsolation: true,
+      nodeIntegration: false
+    }}
+  }});
+  installContextMenu(mainWindow);
+
+  try {{
+    const url = await startBackend();
+    await mainWindow.loadURL(url);
+  }} catch (error) {{
+    await dialog.showMessageBox({{
+      type: "error",
+      title: `${{PRODUCT_NAME}} could not start`,
+      message: "The local app backend could not be started.",
+      detail: error.stack || error.message
+    }});
+    app.quit();
+  }}
+}}
+
+function stopBackend() {{
+  if (backendProcess && !backendProcess.killed) backendProcess.kill("SIGTERM");
+}}
+
+app.whenReady().then(() => {{
+  createMenu();
+  createWindow();
+  app.on("activate", () => {{
+    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+  }});
+}});
+
+app.on("before-quit", stopBackend);
+app.on("window-all-closed", () => {{
+  if (process.platform !== "darwin") app.quit();
+}});
+'''
+
+
+def _macos_readme(app_name: str, app_dir: str, backend_command: str, start_url: str) -> str:
+    product = _safe_product_name(app_name)
+    return f"""# {product} Desktop
+
+Electron macOS shell generated by Clod.
+
+## Development
+
+```bash
+cd {app_dir}
+npm install
+npm start
+```
+
+## Build
+
+```bash
+bash scripts/setup-macos-app.sh
+```
+
+The generated app is expected at:
+
+```text
+{app_dir}/dist/mac-arm64/{product}.app
+```
+
+Backend command:
+
+```text
+{backend_command or '(none; loads URL directly)'}
+```
+
+Start URL:
+
+```text
+{start_url}
+```
+"""
+
+
+def _macos_setup_script(app_dir: str) -> str:
+    return f"""#!/usr/bin/env bash
+set -euo pipefail
+
+# Syntax check
+bash -n "${{BASH_SOURCE[0]}}" || exit 1
+
+ROOT_DIR="$(cd "$(dirname "${{BASH_SOURCE[0]}}")/.." && pwd)"
+DESKTOP_DIR="$ROOT_DIR/{app_dir}"
+
+cd "$DESKTOP_DIR"
+
+if [ ! -d "node_modules" ]; then
+  npm install
+else
+  echo "node_modules exists. Skipping npm install."
+fi
+
+echo "Cleaning previous build..."
+rm -rf dist
+
+echo "Packaging macOS app..."
+npm run package:mac
+
+echo "macOS app ready under: $DESKTOP_DIR/dist"
+"""
+
+
+def _ensure_gitignore_entries(root: Path, entries: list[str]) -> None:
+    path = root / ".gitignore"
+    existing = path.read_text(encoding="utf-8", errors="replace").splitlines() if path.exists() else []
+    normalized = {line.strip() for line in existing}
+    missing = [entry for entry in entries if entry not in normalized]
+    if not missing:
+        return
+    content = "\n".join(existing).rstrip()
+    if content:
+        content += "\n"
+    content += "\n".join(missing) + "\n"
+    path.write_text(content, encoding="utf-8")

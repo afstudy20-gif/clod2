@@ -18,6 +18,9 @@ class OpenAICompatibleProvider(BaseProvider):
     """Shared implementation for any OpenAI-compatible API endpoint."""
 
     BASE_URL: str | None = None  # Override in subclass
+    API_NAME = "openai-completions"
+    CONTEXT_WINDOW = 128_000
+    MAX_OUTPUT_TOKENS = 4096
 
     # Model ID substrings to exclude when fetching live models
     _EXCLUDE_PATTERNS: list[str] = ["embed", "tts", "whisper", "dall-e", "moderation", "audio", "realtime", "transcri"]
@@ -191,6 +194,8 @@ class OpenAIProvider(OpenAICompatibleProvider):
     BASE_URL = None  # uses default openai.com endpoint
     SUPPORTS_IMAGES = True
     SUPPORTS_TOOLS = True
+    API_NAME = "openai-completions"
+    REASONING_MODEL_MARKERS = ("o3", "o4", "gpt-5")
 
     DEFAULT_MODELS = {
         "gpt-5.5": "gpt-5.5",
@@ -216,6 +221,7 @@ class OpenAIProvider(OpenAICompatibleProvider):
 class GroqProvider(OpenAICompatibleProvider):
     name = "Groq"
     BASE_URL = "https://api.groq.com/openai/v1"
+    CONTEXT_WINDOW = 131_072
 
     DEFAULT_MODELS = {
         "llama-3.3-70b-versatile": "llama-3.3-70b-versatile",
@@ -233,6 +239,7 @@ class GroqProvider(OpenAICompatibleProvider):
 class MistralProvider(OpenAICompatibleProvider):
     name = "Mistral AI"
     BASE_URL = "https://api.mistral.ai/v1"
+    CONTEXT_WINDOW = 128_000
 
     DEFAULT_MODELS = {
         "mistral-large-latest": "mistral-large-latest",
@@ -250,6 +257,8 @@ class MistralProvider(OpenAICompatibleProvider):
 class DeepSeekProvider(OpenAICompatibleProvider):
     name = "DeepSeek"
     BASE_URL = "https://api.deepseek.com/v1"
+    CONTEXT_WINDOW = 64_000
+    REASONING_MODEL_MARKERS = ("reasoner", "r1")
 
     DEFAULT_MODELS = {
         "deepseek-chat": "deepseek-chat",
@@ -273,6 +282,9 @@ class NvidiaProvider(OpenAICompatibleProvider):
         "nvidia/neva-22b",
     }
     MAX_TOKENS = 16384
+    CONTEXT_WINDOW = 128_000
+    MAX_OUTPUT_TOKENS = 16_384
+    REASONING_MODEL_MARKERS = ("reasoning", "r1")
 
     DEFAULT_MODELS = {
         "microsoft/phi-4-multimodal-instruct": "microsoft/phi-4-multimodal-instruct",
@@ -341,6 +353,7 @@ class NvidiaProvider(OpenAICompatibleProvider):
 class OllamaProvider(OpenAICompatibleProvider):
     name = "Ollama (local)"
     BASE_URL = "http://localhost:11434/v1"
+    CONTEXT_WINDOW = 128_000
 
     DEFAULT_MODELS = {
         "llama3.2": "llama3.2",

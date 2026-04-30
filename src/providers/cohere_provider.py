@@ -12,6 +12,10 @@ from .base import BaseProvider, Message, ToolCall, ToolResult
 
 class CohereProvider(BaseProvider):
     name = "Cohere"
+    API_NAME = "cohere-chat"
+    CONTEXT_WINDOW = 128_000
+    MAX_OUTPUT_TOKENS = 4096
+    REASONING_MODEL_MARKERS = ("reasoning",)
 
     DEFAULT_MODELS = {
         "command-a-reasoning": "command-a-reasoning",

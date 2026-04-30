@@ -10,7 +10,7 @@ PROJECT_MARKERS = (
     "go.mod",
     "Makefile",
     "pom.xml",
-    ".cclaude-project",
+    ".clod-project",
 )
 
 

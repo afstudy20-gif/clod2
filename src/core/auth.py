@@ -9,8 +9,9 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import parse_qs, urlparse
 
 import requests
+from pathlib import Path
 
-from .config import load_config, save_config
+from .config import load_config, save_config, CONFIG_DIR
 
 
 # ── OpenRouter PKCE OAuth ────────────────────────────────────────────────────
@@ -40,7 +41,7 @@ class _OAuthCallbackHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(
                 b"<html><body><h2>Success!</h2>"
-                b"<p>You can close this tab and return to CClaude.</p>"
+                b"<p>You can close this tab and return to Clod.</p>"
                 b"<script>window.close()</script></body></html>"
             )
         else:
@@ -109,6 +110,22 @@ def login_openrouter() -> str | None:
     return None
 
 
+def _find_google_client_secret() -> Path | None:
+    """Find the google client secret file in CONFIG_DIR or home .clod."""
+    search_dirs = [CONFIG_DIR, Path.home() / ".clod"]
+    for d in search_dirs:
+        if not d.is_dir():
+            continue
+        # 1. Check for specific name
+        p = d / "google_client_secret.json"
+        if p.exists():
+            return p
+        # 2. Check for any client_secret_*.json
+        for p in d.glob("client_secret_*.json"):
+            return p
+    return None
+
+
 # ── Google Gemini OAuth ──────────────────────────────────────────────────────
 
 def login_google() -> str | None:
@@ -118,13 +135,9 @@ def login_google() -> str | None:
     except ImportError:
         return None
 
-    # Users need their own client_secrets.json from Google Cloud Console.
-    # Check for it in ~/.cclaude/google_client_secret.json
-    import os
-    from pathlib import Path
-
-    secret_path = Path.home() / ".cclaude" / "google_client_secret.json"
-    if not secret_path.exists():
+    # Check for client secret in CONFIG_DIR
+    secret_path = _find_google_client_secret()
+    if not secret_path:
         return None
 
     scopes = ["https://www.googleapis.com/auth/generative-language"]
@@ -153,6 +166,21 @@ def login_google() -> str | None:
         return credentials.token
     except Exception:
         return None
+
+
+def google_oauth_status() -> dict:
+    """Return a safe Google OAuth status payload for UI display."""
+    config = load_config()
+    token_data = config.get("oauth", {}).get("google") or {}
+    secret_path = _find_google_client_secret()
+    configured = bool(token_data.get("refresh_token") or token_data.get("token"))
+    return {
+        "configured": configured,
+        "source": "oauth" if configured else None,
+        "client_secret_exists": secret_path is not None,
+        "client_secret_path": str(secret_path) if secret_path else str(CONFIG_DIR / "google_client_secret.json"),
+        "scopes": token_data.get("scopes") or [],
+    }
 
 
 def get_google_credentials():
@@ -192,19 +220,19 @@ def get_google_credentials():
 OAUTH_PROVIDERS = {
     "openrouter": {
         "name": "OpenRouter",
-        "description": "Access Claude, GPT, Gemini, Llama & more via single sign-in",
+        "description": "Access many model families via single sign-in",
         "login": login_openrouter,
     },
     "google": {
         "name": "Google (Gemini)",
         "description": "Sign in with Google for Gemini API access",
         "login": login_google,
-        "setup_note": "Requires ~/.cclaude/google_client_secret.json from Google Cloud Console",
+        "setup_note": "Requires ~/.clod/google_client_secret.json from Google Cloud Console",
     },
     "gemini": {
         "name": "Google (Gemini)",
         "description": "Sign in with Google for Gemini API access",
         "login": login_google,
-        "setup_note": "Requires ~/.cclaude/google_client_secret.json from Google Cloud Console",
+        "setup_note": "Requires ~/.clod/google_client_secret.json from Google Cloud Console",
     },
 }

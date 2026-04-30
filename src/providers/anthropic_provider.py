@@ -8,8 +8,12 @@ from .base import BaseProvider, Message, ToolCall
 
 
 class AnthropicProvider(BaseProvider):
-    name = "Anthropic (Claude)"
+    name = "Anthropic"
     SUPPORTS_IMAGES = True
+    API_NAME = "anthropic-messages"
+    CONTEXT_WINDOW = 200_000
+    MAX_OUTPUT_TOKENS = 8096
+    REASONING_MODEL_MARKERS = ("opus", "sonnet-4", "claude-4")
 
     DEFAULT_MODELS = {
         "claude-sonnet-4-6": "claude-sonnet-4-6",

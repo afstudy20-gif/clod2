@@ -17,7 +17,7 @@ def _headers(token: str | None = None) -> dict:
 def github_read_file(repo: str, path: str, ref: str = "HEAD", token: str | None = None) -> str:
     """
     Read a file from a GitHub repository.
-    repo: 'owner/repo'  e.g. 'afstudy20-gif/Cclaude'
+    repo: 'owner/repo'  e.g. 'afstudy20-gif/Clod'
     path: file path inside the repo e.g. 'src/api.py'
     ref: branch, tag or commit SHA (default: HEAD)
     """

@@ -7,8 +7,7 @@ from .openrouter_provider import OpenRouterProvider
 from .tavily_provider import TavilyProvider
 
 PROVIDERS = {
-    # Anthropic Claude
-    "claude": AnthropicProvider,
+    # Anthropic
     "anthropic": AnthropicProvider,
 
     # OpenAI

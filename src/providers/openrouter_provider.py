@@ -7,6 +7,9 @@ from .openai_provider import OpenAICompatibleProvider
 class OpenRouterProvider(OpenAICompatibleProvider):
     name = "OpenRouter"
     BASE_URL = "https://openrouter.ai/api/v1"
+    API_NAME = "openai-completions"
+    CONTEXT_WINDOW = 128_000
+    REASONING_MODEL_MARKERS = ("o3", "o4", "gpt-5", "reasoning", "r1")
 
     DEFAULT_MODELS = {
         # Anthropic
@@ -59,6 +62,6 @@ class OpenRouterProvider(OpenAICompatibleProvider):
         )
         # Set OpenRouter-specific headers
         self.client.default_headers = {
-            "HTTP-Referer": "https://github.com/afstudy20-gif/Cclaude",
-            "X-Title": "CClaude",
+            "HTTP-Referer": "https://github.com/afstudy20-gif/clod2",
+            "X-Title": "Clod by Yusuf Hosoglu",
         }

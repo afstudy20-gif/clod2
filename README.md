@@ -1,6 +1,6 @@
 # Clod — Multi-Provider AI Coding Assistant
 
-A terminal-based AI coding assistant (Claude Code alternative) that works with **Anthropic Claude**, **OpenAI ChatGPT**, **Google Gemini**, **Groq**, **Mistral**, **DeepSeek**, **NVIDIA NIM**, **Tavily Search**, **Cohere**, and **Ollama** — using your own API keys.
+Clod is a multi-provider AI coding assistant created by **Yusuf Hosoglu**. It works with **Anthropic**, **OpenAI ChatGPT**, **Google Gemini**, **Groq**, **Mistral**, **DeepSeek**, **NVIDIA NIM**, **Tavily Search**, **Cohere**, and **Ollama** — using your own API keys.
 
 ## Features
 
@@ -13,6 +13,9 @@ A terminal-based AI coding assistant (Claude Code alternative) that works with *
 - **Interactive model picker**: Browse and switch models easily
 - **Streaming**: Responses stream in real time with tool execution indicators
 - **Context management**: Automatically trims history to stay within token limits
+- **Model metadata**: Provider listings include API family, tool/image support, reasoning hints, context window, and max output tokens
+- **Portable context**: Saved sessions preserve provider/model metadata for cross-provider handoffs
+- **Validated tools**: Tool arguments are normalized and schema-checked before execution so models can retry from clear tool errors
 
 ## Quick Start
 
@@ -41,10 +44,17 @@ export NVIDIA_API_KEY=nvapi-...
 export TAVILY_API_KEY=tvly-...
 ```
 
+### OAuth Options
+
+Clod supports browser/device login for providers where OAuth is appropriate:
+
+- **Gemini OAuth**: put your Google OAuth desktop client secret at `~/.clod/google_client_secret.json`, then open **API Keys -> Connect Google**. Clod stores refresh tokens in `~/.clod/config.json` and uses them for Gemini when no `GOOGLE_API_KEY` env var is set.
+- **Codex OAuth**: install/login with the official `codex` CLI, then open **API Keys -> Connect Codex**. Clod starts the official `codex login` flow and shows the current Codex login status. OpenAI API calls still use `OPENAI_API_KEY`; Codex OAuth is handled through the local Codex CLI/app-server auth model.
+
 ### 3. Run
 
 ```bash
-# Default: Anthropic Claude
+# Default: Anthropic
 python main.py
 
 # Use OpenAI
@@ -59,6 +69,65 @@ python main.py --resume
 # Set project directory explicitly
 python main.py --project /path/to/project
 ```
+
+## macOS VS Code Usage
+
+Clod includes a local VS Code extension wrapper under `vscode-extension/`.
+
+```bash
+cd /Users/yh/Desktop/clod2/clod-agent
+./scripts/setup-vscode-macos.sh
+code /Users/yh/Desktop/clod2/clod-agent/vscode-extension
+```
+
+Then press `F5` in VS Code, open the project you want Clod to edit in the Extension Development Host, and run:
+
+- `Clod: Start Backend`
+- `Clod: Open Chat`
+
+Set these extension settings when needed:
+
+```json
+{
+  "clod.backendPath": "/Users/yh/Desktop/clod2/clod-agent",
+  "clod.pythonPath": "/Users/yh/Desktop/clod2/venv/bin/python"
+}
+```
+
+The extension sends the active VS Code workspace path to the backend, so edits, terminal checks, dev servers, and GitHub pushes run in the repo opened in VS Code.
+
+## macOS Desktop App
+
+Clod also includes an Electron desktop shell under `desktop-app/`. It starts the FastAPI backend on localhost, waits for `/health`, then opens the Clod web UI in a native macOS window.
+
+```bash
+cd /Users/yh/Desktop/clod2/clod-agent
+bash scripts/setup-desktop-macos.sh
+open /Users/yh/Desktop/clod2/clod-agent/desktop-app/dist/mac-arm64/Clod.app
+```
+
+For development:
+
+```bash
+cd /Users/yh/Desktop/clod2/clod-agent/desktop-app
+npm start
+```
+
+If the app cannot find the correct Python environment, set `CLOD_PYTHON` to the virtualenv Python that has `uvicorn` installed:
+
+```bash
+export CLOD_PYTHON=/Users/yh/Desktop/clod2/clod-agent/venv/bin/python
+```
+
+## Building macOS Apps With Clod
+
+Clod can scaffold Electron-based macOS desktop packages for other projects. In the UI, select a workspace and click **Build macOS App**, or ask:
+
+```text
+Turn this project into a macOS desktop app package.
+```
+
+The agent will inspect the project, choose the backend command and localhost URL, call `scaffold_macos_app`, then package with Electron when practical. The scaffold includes native macOS copy/paste support, a right-click edit menu, build scripts, and an Electron `package:mac` target.
 
 ## Commands
 
@@ -144,12 +213,26 @@ python main.py --project /path/to/project
 
 In **explore** and **plan** modes, only read-only tools (read_file, glob, grep, list_dir) are available.
 
+Tool execution follows a typed validation loop inspired by `@mariozechner/pi-ai`: arguments are normalized for provider quirks, checked against the tool schema, and validation failures are returned as tool errors rather than Python exceptions. For example, provider-style `read_file` ranges such as `view_range: [10, 20]` are converted to Clod's `offset`/`limit` form.
+
+## Model Metadata & Handoffs
+
+`/providers` returns both the raw model IDs and structured metadata for each model:
+
+- `api`: provider API family such as `anthropic-messages`, `google-generative-ai`, or `openai-completions`
+- `input`: supported input types such as `text` and `image`
+- `supports_tools`: whether the provider can call tools
+- `reasoning`: heuristic flag for thinking/reasoning-capable models
+- `context_window` and `max_output_tokens`: routing hints for long tasks
+
+Saved sessions also serialize assistant message provider/model metadata. This keeps conversation history portable when a session is resumed with a different model after provider outages, rate limits, or manual model switching.
+
 ## Markdown Skills
 
 Clod loads project markdown instructions into the agent system prompt from:
 
 - `AGENTS.md`
-- `CLAUDE.md`
+- `CLOD.md`
 - `skills/*/SKILL.md`
 
 This repository includes `skills/karpathy-guidelines/SKILL.md`, adapted from `afstudy20-gif/karpathy-skills`, to encourage simpler, more surgical, and more verifiable coding changes.
@@ -158,7 +241,7 @@ This repository includes `skills/karpathy-guidelines/SKILL.md`, adapted from `af
 
 | Provider | Alias(es) | Key env var | Cost |
 |----------|-----------|-------------|------|
-| **Anthropic Claude** | `claude`, `anthropic` | `ANTHROPIC_API_KEY` | $$ |
+| **Anthropic** | `anthropic` | `ANTHROPIC_API_KEY` | $$ |
 | **OpenAI ChatGPT** | `openai`, `chatgpt`, `gpt` | `OPENAI_API_KEY` | $$ |
 | **Google Gemini** | `gemini`, `google` | `GOOGLE_API_KEY` | $ |
 | **Groq** | `groq` | `GROQ_API_KEY` | free tier |

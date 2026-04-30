@@ -1,0 +1,5 @@
+{
+  "clod.backendPath": "/Users/yh/Desktop/clod2/clod-agent",
+  "clod.pythonPath": "/Users/yh/Desktop/clod2/venv/bin/python",
+  "clod.serverUrl": "http://127.0.0.1:8000"
+}

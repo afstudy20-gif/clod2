@@ -7,7 +7,7 @@ from typing import Any
 
 from ..providers.base import Message, ToolCall, ToolResult
 
-SESSIONS_DIR = Path.home() / ".cclaude" / "sessions"
+SESSIONS_DIR = Path.home() / ".clod" / "sessions"
 
 
 def _serialize_message(msg: Message) -> dict:
@@ -23,6 +23,10 @@ def _serialize_message(msg: Message) -> dict:
             {"tool_call_id": tr.tool_call_id, "content": tr.content, "is_error": tr.is_error}
             for tr in msg.tool_results
         ],
+        "provider": msg.provider,
+        "model": msg.model,
+        "stop_reason": msg.stop_reason,
+        "response_id": msg.response_id,
     }
 
 
@@ -43,6 +47,10 @@ def _deserialize_message(data: dict) -> Message:
             )
             for tr in data.get("tool_results", [])
         ],
+        provider=data.get("provider", ""),
+        model=data.get("model", ""),
+        stop_reason=data.get("stop_reason", ""),
+        response_id=data.get("response_id", ""),
     )
 
 
@@ -113,6 +121,29 @@ def list_sessions() -> list[dict]:
         except Exception:
             continue
     return sessions
+
+
+def export_context(
+    messages: list[Message],
+    provider: str = "",
+    model: str = "",
+    system_prompt: str = "",
+) -> dict[str, Any]:
+    """Return a portable JSON context that can be resumed by another provider."""
+    return {
+        "version": 1,
+        "provider": provider,
+        "model": model,
+        "system_prompt": system_prompt,
+        "messages": [_serialize_message(m) for m in messages],
+    }
+
+
+def import_context(data: dict[str, Any]) -> tuple[list[Message], dict[str, Any]]:
+    """Load messages and metadata from an exported context dict."""
+    messages = [_deserialize_message(m) for m in data.get("messages", [])]
+    metadata = {k: v for k, v in data.items() if k != "messages"}
+    return messages, metadata
 
 
 def delete_session(session_id: str) -> bool:

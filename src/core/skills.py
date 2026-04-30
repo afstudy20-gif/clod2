@@ -5,7 +5,7 @@ MAX_INSTRUCTION_CHARS = 40_000
 
 
 def load_project_instructions(project_root: str | None) -> str:
-    """Load AGENTS.md, CLAUDE.md, and skills/*/SKILL.md from a project."""
+    """Load AGENTS.md, CLOD.md, and skills/*/SKILL.md from a project."""
     if not project_root:
         return ""
 
@@ -41,9 +41,11 @@ def list_project_instruction_files(project_root: str | None) -> list[str]:
 
 
 def _instruction_paths(root: Path) -> list[Path]:
-    paths = [root / "AGENTS.md", root / "CLAUDE.md"]
+    paths = [root / "AGENTS.md", root / "CLOD.md"]
     skills_dir = root / "skills"
     if skills_dir.is_dir():
+        # Include *.md files directly in skills/ and subfolder SKILL.md files
+        paths.extend(sorted(skills_dir.glob("*.md")))
         paths.extend(sorted(skills_dir.glob("*/SKILL.md")))
     return paths
 

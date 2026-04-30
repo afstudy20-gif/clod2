@@ -659,6 +659,17 @@
   .key-input-row input {
     flex: 1;
   }
+  .key-oauth-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .key-oauth-note {
+    color: var(--text3);
+    font-size: 11px;
+    line-height: 1.4;
+  }
   .key-test-result {
     font-size: 11px;
     padding: 4px 0;
@@ -717,6 +728,31 @@
   }
   .context-menu-item:hover { background: var(--bg4); color: var(--text); }
   .context-menu-item.danger:hover { background: rgba(239,68,68,0.1); color: var(--red); }
+  
+  /* Model Management */
+  .model-manage-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px;
+    border-radius: 6px;
+    background: var(--bg4);
+    border: 1px solid var(--border2);
+    margin-bottom: 6px;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .model-manage-item:hover { border-color: var(--accent); }
+  .model-manage-item input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+    accent-color: var(--accent);
+    cursor: pointer;
+  }
+  .model-manage-info { flex: 1; display: flex; flex-direction: column; gap: 2px; }
+  .model-manage-name { font-size: 13px; color: var(--text); }
+  .model-manage-id { font-size: 10px; color: var(--text3); font-family: var(--mono); }
+  .model-manage-list { max-height: 400px; overflow-y: auto; padding-right: 4px; }
 
   /* Responsive */
   @media (max-width: 700px) {
@@ -780,6 +816,7 @@
         <div style="display:flex;gap:4px;align-items:center;">
           <select id="model-select" style="flex:1"></select>
           <button id="refresh-models-btn" onclick="updateModels()" title="Update models from provider API" style="background:#333;border:1px solid #555;color:#f90;padding:4px 8px;border-radius:6px;cursor:pointer;font-size:14px;">&#x21BB;</button>
+          <button id="manage-models-btn" onclick="openModelManageModal()" title="Filter/Manage visible models" style="background:#333;border:1px solid #555;color:#0af;padding:4px 8px;border-radius:6px;cursor:pointer;font-size:14px;">⚙️</button>
         </div>
       </div>
       <div>
@@ -879,6 +916,7 @@
           <button class="tool-btn" onclick="manualList()">List Dir</button>
           <button class="tool-btn" onclick="createDevServer()">Create Dev Server</button>
           <button class="tool-btn" onclick="addPwa()">Add PWA</button>
+          <button class="tool-btn" onclick="packageMacosApp()">Build macOS App</button>
           <button class="tool-btn" onclick="applyClodImprovements()">Apply Improvements</button>
           <button class="tool-btn primary" onclick="pushToGithub()">Push GitHub</button>
         </div>
@@ -900,15 +938,35 @@
   </div>
 </div>
 
+<!-- Model Management Modal -->
+<div class="modal-overlay" id="model-manage-modal">
+  <div class="modal" style="max-width: 500px;">
+    <button class="modal-close" onclick="closeModelManageModal()">&times;</button>
+    <h2 id="model-manage-title">Manage Models</h2>
+    <p style="color:var(--text3);font-size:12px;margin-bottom:16px;">
+      Uncheck models to hide them from the main dropdown. 
+      Click "Update Models" to restore defaults.
+    </p>
+    <div id="model-manage-list" class="model-manage-list"></div>
+    <div style="margin-top: 16px; display: flex; gap: 8px;">
+      <button class="settings-btn" id="modal-test-all-btn" onclick="testAllModels()" style="flex:1">Test All</button>
+      <button class="settings-btn" id="modal-disable-failed-btn" onclick="disableFailedModels()" style="flex:1">Disable Failed</button>
+      <button class="settings-btn primary" onclick="closeModelManageModal()" style="flex:1">Done</button>
+    </div>
+  </div>
+</div>
+
 <script>
 if (window.location.protocol === 'file:') {
-  window.location.href = 'http://127.0.0.1:8000';
+  // If user opens index.html as a file, redirect to the default local server
+  const port = new URLSearchParams(window.location.search).get('port') || '8010';
+  window.location.href = 'http://127.0.0.1:' + port;
 }
 
 // Models — fallback defaults, overridden by backend on load
 let MODELS = {
   openai:     ['gpt-5.5','gpt-5.4','gpt-5.4-mini','gpt-5.4-nano','gpt-5','gpt-5-mini','gpt-5-nano','gpt-4.1','gpt-4.1-mini','gpt-4.1-nano','o3','o4-mini'],
-  claude:     ['claude-sonnet-4-6','claude-opus-4-6','claude-haiku-4-5-20251001','claude-3-5-sonnet-20241022'],
+  anthropic:  ['claude-sonnet-4-6','claude-opus-4-6','claude-haiku-4-5-20251001','claude-3-5-sonnet-20241022'],
   gemini:     ['gemini-2.5-pro','gemini-2.5-flash','gemini-2.5-flash-lite','gemini-2.0-flash','gemini-2.0-flash-lite'],
   groq:       ['llama-3.3-70b-versatile','llama-3.1-8b-instant','gemma2-9b-it','deepseek-r1-distill-llama-70b'],
   mistral:    ['mistral-large-latest','mistral-medium-latest','mistral-small-latest','codestral-latest'],
@@ -922,7 +980,7 @@ let MODELS = {
 
 const PROVIDER_NAMES = {
   openai: 'OpenAI',
-  claude: 'Anthropic Claude',
+  anthropic: 'Anthropic',
   gemini: 'Google Gemini',
   groq: 'Groq',
   mistral: 'Mistral AI',
@@ -934,9 +992,14 @@ const PROVIDER_NAMES = {
   openrouter: 'OpenRouter',
 };
 
+let disabledModels = {}; // { provider: [modelId, ...] }
+try {
+  disabledModels = JSON.parse(localStorage.getItem('clod_disabled_models') || '{}');
+} catch (e) {}
+
 const KEY_ENV_HINTS = {
   openai: 'OPENAI_API_KEY',
-  claude: 'ANTHROPIC_API_KEY',
+  anthropic: 'ANTHROPIC_API_KEY',
   gemini: 'GOOGLE_API_KEY',
   groq: 'GROQ_API_KEY',
   mistral: 'MISTRAL_API_KEY',
@@ -947,10 +1010,11 @@ const KEY_ENV_HINTS = {
   tavily: 'TAVILY_API_KEY',
 };
 
-let chats = JSON.parse(localStorage.getItem('cclaude_chats') || '[]');
+let chats = JSON.parse(localStorage.getItem('clod_chats') || '[]');
 let currentChatId = null;
 let isStreaming = false;
 let keyStatuses = {};
+let oauthStatuses = {};
 let providerCapabilities = {};
 let streamingAssistantText = '';
 let pendingImages = [];
@@ -989,10 +1053,10 @@ async function init() {
   ).join('');
 
   // Restore last provider/model
-  const savedProvider = localStorage.getItem('cclaude_provider') || 'openai';
-  const savedModel = localStorage.getItem('cclaude_model');
-  document.getElementById('workspace-input').value = localStorage.getItem('cclaude_workspace') || '';
-  const savedMode = localStorage.getItem('cclaude_mode') || 'chat';
+  const savedProvider = localStorage.getItem('clod_provider') || 'openai';
+  const savedModel = localStorage.getItem('clod_model');
+  document.getElementById('workspace-input').value = localStorage.getItem('clod_workspace') || '';
+  const savedMode = localStorage.getItem('clod_mode') || 'chat';
   document.getElementById('mode-select').value = savedMode === 'build' || savedMode === 'debug' ? 'build_debug' : savedMode;
   ps.value = savedProvider;
   onProviderChange();
@@ -1057,7 +1121,7 @@ async function updateModels(provider = null) {
     if ([...ms.options].some(o => o.value === currentModel)) {
       ms.value = currentModel;
     }
-    localStorage.setItem('cclaude_model', ms.value || '');
+    localStorage.setItem('clod_model', ms.value || '');
     updateTopbar();
 
     if (result) {
@@ -1096,6 +1160,10 @@ async function loadKeyStatuses() {
     const resp = await fetch('/config/keys/status');
     if (resp.ok) keyStatuses = await resp.json();
   } catch {}
+  try {
+    const resp = await fetch('/auth/oauth/status');
+    if (resp.ok) oauthStatuses = await resp.json();
+  } catch {}
 }
 
 function onProviderChange() {
@@ -1103,34 +1171,198 @@ function onProviderChange() {
   const ms = document.getElementById('model-select');
   const topbarBtn = document.getElementById('topbar-update-models-btn');
   const topbarResult = document.getElementById('topbar-model-update-result');
-  ms.innerHTML = (MODELS[p] || []).map(m => `<option value="${m}">${formatModelLabel(p, m)}</option>`).join('');
-  localStorage.setItem('cclaude_provider', p);
+  
+  const providerModels = MODELS[p] || [];
+  const pDisabled = disabledModels[p] || [];
+  
+  const visibleModels = providerModels.filter(m => !pDisabled.includes(m));
+  
+  // If all are disabled, show all as fallback
+  const toShow = visibleModels.length ? visibleModels : providerModels;
+  
+  ms.innerHTML = toShow.map(m => `<option value="${m}">${formatModelLabel(p, m)}</option>`).join('');
+  localStorage.setItem('clod_provider', p);
   if (topbarBtn) topbarBtn.textContent = 'Update Models';
   if (topbarResult) topbarResult.textContent = '';
   if (pendingImages.length) updatePasteStatus(`${pendingImages.length} image${pendingImages.length === 1 ? '' : 's'} attached.`);
   updateTopbar();
 }
 
+function openModelManageModal() {
+  const p = document.getElementById('provider-select').value;
+  const providerName = PROVIDER_NAMES[p] || p;
+  document.getElementById('model-manage-title').textContent = `Manage ${providerName} Models`;
+  
+  const list = document.getElementById('model-manage-list');
+  const providerModels = MODELS[p] || [];
+  const pDisabled = disabledModels[p] || [];
+  
+  list.innerHTML = providerModels.map(m => {
+    const isChecked = !pDisabled.includes(m);
+    return `
+      <div class="model-manage-item">
+        <input type="checkbox" ${isChecked ? 'checked' : ''} onclick="toggleModelVisibility('${p}', '${m}')">
+        <div class="model-manage-info" onclick="toggleModelVisibility('${p}', '${m}')">
+          <div class="model-manage-name">${formatModelLabel(p, m)}</div>
+          <div class="model-manage-id">${m}</div>
+        </div>
+        <div class="model-test-result" id="test-result-${m.replace(/[^a-zA-Z0-9]/g, '-')}" style="font-size:10px;margin-right:8px;"></div>
+        <button class="settings-btn" onclick="testModel('${p}', '${m}', this)" style="padding:2px 6px;font-size:10px;">Test</button>
+      </div>
+    `;
+  }).join('');
+  
+  document.getElementById('model-manage-modal').classList.add('open');
+}
+
+async function testModel(provider, modelId, btn) {
+  const resultEl = document.getElementById(`test-result-${modelId.replace(/[^a-zA-Z0-9]/g, '-')}`);
+  btn.disabled = true;
+  const originalText = btn.textContent;
+  btn.textContent = '...';
+  resultEl.textContent = 'Testing...';
+  resultEl.style.color = 'var(--text3)';
+  
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 15000); // 15s timeout for ping
+    
+    const resp = await fetch('/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        messages: [{ role: 'user', content: 'Say "OK" and nothing else.' }],
+        provider: provider,
+        model: modelId,
+        mode: 'chat'
+      }),
+      signal: controller.signal
+    });
+    
+    clearTimeout(timeoutId);
+    
+    if (resp.ok) {
+      resultEl.textContent = '✓ OK';
+      resultEl.style.color = 'var(--green)';
+    } else {
+      const err = await resp.json().catch(() => ({ detail: 'Failed' }));
+      resultEl.textContent = '✗ ' + (err.detail || 'Error');
+      resultEl.style.color = 'var(--red)';
+    }
+  } catch (e) {
+    resultEl.textContent = '✗ ' + (e.name === 'AbortError' ? 'Timeout' : 'Offline');
+    resultEl.style.color = 'var(--red)';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = originalText;
+  }
+}
+
+async function testAllModels() {
+  const p = document.getElementById('provider-select').value;
+  const list = document.getElementById('model-manage-list');
+  const items = Array.from(list.querySelectorAll('.model-manage-item'));
+  const testAllBtn = document.getElementById('modal-test-all-btn');
+  
+  testAllBtn.disabled = true;
+  testAllBtn.textContent = 'Testing...';
+  
+  try {
+    for (const item of items) {
+      const btn = item.querySelector('button');
+      const modelId = item.querySelector('.model-manage-id').textContent;
+      const cb = item.querySelector('input[type="checkbox"]');
+      
+      // Only test models that are currently enabled/checked
+      if (btn && !btn.disabled && cb && cb.checked) {
+        await testModel(p, modelId, btn);
+      }
+    }
+  } finally {
+    testAllBtn.disabled = false;
+    testAllBtn.textContent = 'Test All';
+  }
+}
+
+function disableFailedModels() {
+  const p = document.getElementById('provider-select').value;
+  const list = document.getElementById('model-manage-list');
+  const items = list.querySelectorAll('.model-manage-item');
+  
+  let changed = false;
+  items.forEach(item => {
+    const resultEl = item.querySelector('.model-test-result');
+    const modelId = item.querySelector('.model-manage-id').textContent;
+    const cb = item.querySelector('input[type="checkbox"]');
+    
+    // If test failed (starts with ✗), uncheck it and add to disabled list
+    if (resultEl.textContent.trim().startsWith('✗')) {
+      if (!disabledModels[p]) disabledModels[p] = [];
+      if (!disabledModels[p].includes(modelId)) {
+        disabledModels[p].push(modelId);
+        changed = true;
+      }
+      if (cb) cb.checked = false;
+    }
+  });
+  
+  if (changed) {
+    localStorage.setItem('clod_disabled_models', JSON.stringify(disabledModels));
+    onProviderChange(); // Refresh main dropdown
+  }
+}
+
+function closeModelManageModal() {
+  document.getElementById('model-manage-modal').classList.remove('open');
+  onProviderChange();
+}
+
+function toggleModelVisibility(provider, modelId) {
+  if (!disabledModels[provider]) disabledModels[provider] = [];
+  const idx = disabledModels[provider].indexOf(modelId);
+  if (idx === -1) {
+    disabledModels[provider].push(modelId);
+  } else {
+    disabledModels[provider].splice(idx, 1);
+  }
+  localStorage.setItem('clod_disabled_models', JSON.stringify(disabledModels));
+  
+  // Update checkboxes in modal
+  const list = document.getElementById('model-manage-list');
+  const items = list.querySelectorAll('.model-manage-item');
+  const providerModels = MODELS[provider] || [];
+  const pDisabled = disabledModels[provider] || [];
+  
+  providerModels.forEach((m, i) => {
+    const cb = items[i].querySelector('input');
+    cb.checked = !pDisabled.includes(m);
+  });
+}
+
 function onWorkspaceChange() {
-  localStorage.setItem('cclaude_workspace', document.getElementById('workspace-input').value.trim());
+  localStorage.setItem('clod_workspace', document.getElementById('workspace-input').value.trim());
 }
 
 function onModeChange() {
-  localStorage.setItem('cclaude_mode', document.getElementById('mode-select').value);
+  localStorage.setItem('clod_mode', document.getElementById('mode-select').value);
   updateTopbar();
 }
 
 async function pushToGithub() {
   const result = document.getElementById('push-result');
+  const input = document.getElementById('user-input');
+  const typed = input.value.trim();
+  const remoteUrl = rememberGithubUrl(typed) || getLastGithubUrl();
   result.className = '';
   result.textContent = 'Pushing...';
-  appendQuickToolResult('git push', 'start', 'Pushing current branch to GitHub...');
+  appendQuickToolResult('git push', 'start', remoteUrl ? `Pushing current branch to ${remoteUrl}...` : 'Pushing current branch to GitHub...');
   try {
     const resp = await fetch('/git/push', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         workspace: document.getElementById('workspace-input').value.trim() || null,
+        remote: remoteUrl || 'origin',
       }),
     });
     const data = await resp.json().catch(() => ({ detail: resp.statusText }));
@@ -1142,6 +1374,11 @@ async function pushToGithub() {
     }
     result.className = data.ok ? 'success' : 'error';
     result.textContent = data.output || 'Push complete';
+    if (data.ok && remoteUrl) {
+      input.value = '';
+      autoResize(input);
+      updateTokenMonitor();
+    }
     appendQuickToolResult('git push', data.ok ? 'result' : 'error', result.textContent);
   } catch (e) {
     result.className = 'error';
@@ -1150,10 +1387,49 @@ async function pushToGithub() {
   }
 }
 
+function extractGithubUrl(text) {
+  const source = String(text || '').trim();
+  if (!source) return '';
+  const httpsMatch = source.match(/https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(?:\.git)?/i);
+  if (httpsMatch) return httpsMatch[0].endsWith('.git') ? httpsMatch[0] : `${httpsMatch[0]}.git`;
+  const sshMatch = source.match(/git@github\.com:[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(?:\.git)?/i);
+  if (sshMatch) return sshMatch[0].endsWith('.git') ? sshMatch[0] : `${sshMatch[0]}.git`;
+  const shorthandMatch = source.match(/\b([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)\b/);
+  if (shorthandMatch && !source.includes('://')) return `https://github.com/${shorthandMatch[1]}.git`;
+  return '';
+}
+
+function githubRemoteStorageKey() {
+  const workspace = document.getElementById('workspace-input')?.value?.trim() || 'default';
+  return `clod_last_github_remote:${workspace}`;
+}
+
+function rememberGithubUrl(text) {
+  const url = extractGithubUrl(text);
+  if (!url) return '';
+  localStorage.setItem(githubRemoteStorageKey(), url);
+  localStorage.setItem('clod_last_github_remote', url);
+  return url;
+}
+
+function getLastGithubUrl() {
+  const fromWorkspace = localStorage.getItem(githubRemoteStorageKey()) || '';
+  if (fromWorkspace) return fromWorkspace;
+  const fromGlobal = localStorage.getItem('clod_last_github_remote') || '';
+  if (fromGlobal) return fromGlobal;
+  const chat = getCurrentChat();
+  if (!chat || !Array.isArray(chat.messages)) return '';
+  for (let i = chat.messages.length - 1; i >= 0; i--) {
+    const url = extractGithubUrl(getMessageText(chat.messages[i]));
+    if (url) return rememberGithubUrl(url);
+  }
+  return '';
+}
+
 document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('model-select').addEventListener('change', () => {
     const m = document.getElementById('model-select').value;
-    localStorage.setItem('cclaude_model', m);
+    localStorage.setItem('clod_model', m);
     updateTopbar();
   });
 });
@@ -1464,7 +1740,7 @@ function saveChats() {
     ...c,
     messages: c.messages.slice(-40)
   }));
-  try { localStorage.setItem('cclaude_chats', JSON.stringify(trimmed)); } catch(e) {}
+  try { localStorage.setItem('clod_chats', JSON.stringify(trimmed)); } catch(e) {}
 }
 
 function renderChatList() {
@@ -1502,9 +1778,43 @@ function closeContextMenu() {
   document.getElementById('context-menu').style.display = 'none';
 }
 
+// History steering
+let commandHistory = [];
+let historyIndex = -1;
+let historyDraft = '';
+
 // Sending
 function handleKey(e) {
-  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+  if (e.key === 'Enter' && !e.shiftKey) { 
+    e.preventDefault(); 
+    sendMessage(); 
+  } else if (e.key === 'ArrowUp') {
+    const input = document.getElementById('user-input');
+    // Only steer if cursor is at the very beginning of the input
+    if (input.selectionStart === 0 && input.selectionEnd === 0) {
+      if (historyIndex === -1) {
+        historyDraft = input.value;
+        historyIndex = commandHistory.length;
+      }
+      if (historyIndex > 0) {
+        historyIndex--;
+        input.value = commandHistory[historyIndex];
+        e.preventDefault();
+      }
+    }
+  } else if (e.key === 'ArrowDown') {
+    if (historyIndex !== -1) {
+      historyIndex++;
+      const input = document.getElementById('user-input');
+      if (historyIndex >= commandHistory.length) {
+        historyIndex = -1;
+        input.value = historyDraft;
+      } else {
+        input.value = commandHistory[historyIndex];
+      }
+      e.preventDefault();
+    }
+  }
 }
 
 function autoResize(el) {
@@ -1525,9 +1835,26 @@ async function sendMessage() {
   const input = document.getElementById('user-input');
   const text = input.value.trim();
   if (!text && !pendingImages.length) return;
+
+  // Save history
+  if (text && commandHistory[commandHistory.length - 1] !== text) {
+    commandHistory.push(text);
+  }
+  historyIndex = -1;
+  historyDraft = '';
+
   if (text.startsWith('/improve')) {
     input.value = text.replace('/improve', '').trim();
     applyClodImprovements();
+    return;
+  }
+
+  // Local terminal execution bypass
+  if (text.startsWith('/terminal ') || text.startsWith('/t ')) {
+    const cmd = text.replace(/^\/(terminal|t)\s+/, '');
+    input.value = '';
+    autoResize(input);
+    runTerminalCommand(cmd);
     return;
   }
 
@@ -1541,6 +1868,7 @@ async function sendMessage() {
   const chat = getCurrentChat();
   const images = pendingImages.slice();
   const content = buildMessageContent(text, images);
+  rememberGithubUrl(text);
   pendingImages = [];
   renderAttachmentPreview();
   updatePasteStatus('');
@@ -2026,10 +2354,17 @@ function closeKeyModal() {
 function renderKeyModal() {
   const list = document.getElementById('key-list');
   const providers = Object.keys(KEY_ENV_HINTS);
-  list.innerHTML = providers.map(p => {
+  const providerRows = providers.map(p => {
     const ks = keyStatuses[p] || {};
+    const oauth = oauthStatuses[p] || {};
     const statusClass = ks.configured ? 'configured' : 'missing';
-    const statusText = ks.configured ? (ks.source === 'env' ? 'ENV' : 'Saved') : 'Missing';
+    const statusText = ks.configured ? (ks.source === 'env' ? 'ENV' : (ks.source === 'oauth' ? 'OAuth' : 'Saved')) : 'Missing';
+    const geminiOAuth = p === 'gemini' ? `
+        <div class="key-oauth-row">
+          <button class="settings-btn" onclick="connectOAuth('gemini')">Connect Google</button>
+          <span class="key-oauth-note">${oauth.client_secret_exists ? 'Uses Google OAuth tokens saved in ~/.clod/config.json.' : 'Requires ~/.clod/google_client_secret.json.'}</span>
+        </div>
+      ` : '';
     return `
       <div class="key-row" id="key-row-${p}">
         <div class="key-row-header">
@@ -2041,10 +2376,83 @@ function renderKeyModal() {
           <button class="settings-btn" onclick="testKey('${p}')">Test</button>
           <button class="settings-btn primary" onclick="saveKey('${p}')">Save</button>
         </div>
+        ${geminiOAuth}
         <div class="key-test-result" id="key-result-${p}"></div>
       </div>
     `;
   }).join('');
+  const codex = oauthStatuses.codex || {};
+  const codexClass = codex.configured ? 'configured' : 'missing';
+  const codexText = codex.configured ? 'OAuth' : (codex.available ? 'Missing' : 'Not Installed');
+  const codexRow = `
+    <div class="key-row" id="key-row-codex">
+      <div class="key-row-header">
+        <span class="key-provider-name">OpenAI Codex</span>
+        <span class="key-status-badge ${codexClass}" id="key-badge-codex">${codexText}</span>
+      </div>
+      <div class="key-oauth-row">
+        <button class="settings-btn primary" onclick="connectCodex('device')" ${codex.available ? '' : 'disabled'}>Connect Codex</button>
+        <button class="settings-btn" onclick="connectCodex('browser')" ${codex.available ? '' : 'disabled'}>Browser Login</button>
+        <span class="key-oauth-note">${escHtml(codex.message || 'Uses the official local codex login flow.')}</span>
+      </div>
+      <div class="key-test-result" id="key-result-codex"></div>
+    </div>
+  `;
+  list.innerHTML = providerRows + codexRow;
+}
+
+async function connectOAuth(provider) {
+  const result = document.getElementById(`key-result-${provider}`);
+  const badge = document.getElementById(`key-badge-${provider}`);
+  result.className = 'key-test-result testing';
+  result.textContent = provider === 'gemini' ? 'Opening Google login...' : 'Opening OAuth login...';
+
+  try {
+    const resp = await fetch('/auth/oauth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ provider }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.ok) throw new Error(data.detail || data.error || 'OAuth login failed');
+    result.className = 'key-test-result success';
+    result.textContent = 'OAuth connected.';
+    badge.className = 'key-status-badge configured';
+    badge.textContent = 'OAuth';
+    await loadKeyStatuses();
+    await updateModels(provider);
+  } catch (e) {
+    result.className = 'key-test-result error';
+    result.textContent = e.message;
+  }
+}
+
+async function connectCodex(method = 'device') {
+  const result = document.getElementById('key-result-codex');
+  const badge = document.getElementById('key-badge-codex');
+  result.className = 'key-test-result testing';
+  result.textContent = 'Starting Codex login...';
+
+  try {
+    const resp = await fetch('/auth/codex/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ method }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.ok) throw new Error(data.detail || data.error || 'Codex login failed');
+    result.className = 'key-test-result success';
+    result.textContent = data.message || 'Codex login started. Reopen API Keys after finishing login.';
+    setTimeout(async () => {
+      await loadKeyStatuses();
+      const codex = oauthStatuses.codex || {};
+      badge.className = `key-status-badge ${codex.configured ? 'configured' : 'missing'}`;
+      badge.textContent = codex.configured ? 'OAuth' : 'Missing';
+    }, 3000);
+  } catch (e) {
+    result.className = 'key-test-result error';
+    result.textContent = e.message;
+  }
 }
 
 async function testKey(provider) {
@@ -2257,6 +2665,34 @@ function addPwa() {
     '- avoid breaking existing app behavior',
     '- run a quick syntax/build check if available',
     '- report changed files and verification results'
+  ].join('\n');
+  autoResize(input);
+  document.getElementById('mode-select').value = 'build_debug';
+  onModeChange();
+  sendMessage();
+}
+
+function packageMacosApp() {
+  const input = document.getElementById('user-input');
+  const typed = input.value.trim();
+  const workspace = document.getElementById('workspace-input').value.trim() || 'the selected workspace';
+  const request = typed || 'Turn this project into a macOS desktop app package.';
+  input.value = [
+    request,
+    '',
+    `Workspace: ${workspace}`,
+    '',
+    'Create a macOS desktop app/package for this project, similar to the Clod desktop app:',
+    '- inspect package.json, api.py, requirements.txt, static files, and build outputs',
+    '- choose the correct backend command and localhost URL',
+    '- use scaffold_macos_app with explicit app_name, backend_command, start_url, health_path, and port',
+    '- include Electron native Edit menu so copy/paste/select-all work on macOS',
+    '- include right-click context menu for inputs and selectable text',
+    '- include an npm package file, Electron main process, README, and scripts/setup-macos-app.sh',
+    '- run node --check on the generated Electron main file',
+    '- run npm install and npm run package:mac when practical',
+    '- verify the generated .app launches and reaches its health/start URL when practical',
+    '- report the exact app path and verification results'
   ].join('\n');
   autoResize(input);
   document.getElementById('mode-select').value = 'build_debug';

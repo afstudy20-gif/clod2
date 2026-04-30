@@ -1,7 +1,18 @@
 """Tool registry - maps tool schemas to implementation functions."""
 from typing import Any, Callable
 
-from .implementations import bash, edit_file, glob_files, grep_search, list_dir, read_file, write_file
+from .implementations import (
+    bash,
+    edit_file,
+    glob_files,
+    grep_search,
+    list_dir,
+    github_sync,
+    read_file,
+    scaffold_macos_app,
+    write_file,
+    execute_sandbox_python,
+)
 from .git_tools import (
     git_add,
     git_branch,
@@ -45,12 +56,108 @@ class ToolRegistry:
     def execute(self, name: str, arguments: dict[str, Any]) -> str:
         if name not in self._handlers:
             return f"Unknown tool: {name}"
+        arguments = self._normalize_arguments(name, arguments)
+        validation_error = self._validate_arguments(name, arguments)
+        if validation_error:
+            return validation_error
         try:
             return self._handlers[name](**arguments)
         except TypeError as e:
             return f"Tool call error for '{name}': {e}"
         except Exception as e:
             return f"Tool execution error: {e}"
+
+    def _normalize_arguments(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        """Accept common provider-specific argument aliases without exposing them."""
+        if not isinstance(arguments, dict):
+            return arguments
+        normalized = dict(arguments)
+        if name == "read_file":
+            if "path" not in normalized:
+                for alias in ("file_path", "filepath", "file"):
+                    if alias in normalized:
+                        normalized["path"] = normalized.pop(alias)
+                        break
+            view_range = normalized.pop("view_range", None)
+            if view_range is not None and "offset" not in normalized and "limit" not in normalized:
+                normalized.update(_convert_view_range(view_range))
+            start_line = normalized.pop("start_line", None)
+            end_line = normalized.pop("end_line", None)
+            if start_line is not None and "offset" not in normalized:
+                try:
+                    normalized["offset"] = max(0, int(start_line) - 1)
+                except (TypeError, ValueError):
+                    pass
+            if end_line is not None and "limit" not in normalized:
+                try:
+                    start = int(start_line) if start_line is not None else int(normalized.get("offset", 0)) + 1
+                    end = int(end_line)
+                    if end >= start:
+                        normalized["limit"] = end - start + 1
+                except (TypeError, ValueError):
+                    pass
+        return normalized
+
+    def _validate_arguments(self, name: str, arguments: dict[str, Any]) -> str | None:
+        if not isinstance(arguments, dict):
+            return f"Tool call error for '{name}': arguments must be a JSON object."
+        schema = self._tools.get(name, {})
+        params = schema.get("parameters", {})
+        required = params.get("required", []) or []
+        properties = params.get("properties", {}) or {}
+        for key in required:
+            if key not in arguments:
+                return f"Tool call error for '{name}': missing required argument '{key}'."
+        for key, value in arguments.items():
+            if key not in properties:
+                return f"Tool call error for '{name}': unknown argument '{key}'."
+            expected = properties[key].get("type")
+            if expected and not _matches_json_type(value, expected):
+                return (
+                    f"Tool call error for '{name}': argument '{key}' must be {expected}, "
+                    f"got {type(value).__name__}."
+                )
+        return None
+
+
+def _matches_json_type(value: Any, expected: str | list[str]) -> bool:
+    expected_types = expected if isinstance(expected, list) else [expected]
+    for typ in expected_types:
+        if typ == "string" and isinstance(value, str):
+            return True
+        if typ == "integer" and isinstance(value, int) and not isinstance(value, bool):
+            return True
+        if typ == "number" and isinstance(value, (int, float)) and not isinstance(value, bool):
+            return True
+        if typ == "boolean" and isinstance(value, bool):
+            return True
+        if typ == "array" and isinstance(value, list):
+            return True
+        if typ == "object" and isinstance(value, dict):
+            return True
+        if typ == "null" and value is None:
+            return True
+    return False
+
+
+def _convert_view_range(view_range: Any) -> dict[str, int]:
+    """Convert provider-style 1-based inclusive view ranges to offset/limit."""
+    if not isinstance(view_range, (list, tuple)) or not view_range:
+        return {}
+    try:
+        start = int(view_range[0])
+    except (TypeError, ValueError):
+        return {}
+    offset = max(0, start - 1)
+    if len(view_range) < 2:
+        return {"offset": offset}
+    try:
+        end = int(view_range[1])
+    except (TypeError, ValueError):
+        return {"offset": offset}
+    if end < start:
+        return {"offset": offset}
+    return {"offset": offset, "limit": end - start + 1}
 
 
 def get_default_registry() -> ToolRegistry:
@@ -125,6 +232,38 @@ def get_default_registry() -> ToolRegistry:
 
     reg.register(
         {
+            "name": "github_sync",
+            "description": "Advanced Git sync: pulls before pushing, handles new repos, and manages conflicts. Use this for GitHub updates.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "commit_message": {"type": "string", "description": "Descriptive commit message"},
+                    "branch_name": {"type": "string", "description": "Branch to sync (default: main)"},
+                    "remote_url": {"type": "string", "description": "Optional: remote URL to initialize for a new repo"},
+                },
+                "required": ["commit_message"],
+            },
+        },
+        github_sync,
+    )
+
+    reg.register(
+        {
+            "name": "execute_sandbox_python",
+            "description": "Execute python code safely in a disconnected Docker sandbox and return stdout/stderr. Use for testing/evaluating Python code.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "code": {"type": "string", "description": "Python code to execute inside the sandbox"},
+                },
+                "required": ["code"],
+            },
+        },
+        execute_sandbox_python,
+    )
+
+    reg.register(
+        {
             "name": "glob",
             "description": "Find files matching a glob pattern like '**/*.py' or '*.json'.",
             "parameters": {
@@ -176,6 +315,39 @@ def get_default_registry() -> ToolRegistry:
         readonly=True,
     )
 
+    reg.register(
+        {
+            "name": "scaffold_macos_app",
+            "description": (
+                "Create an Electron-based macOS desktop app/package scaffold for the current project. "
+                "Use this after inspecting the project and choosing the backend command/start URL."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "app_name": {"type": "string", "description": "Display name for the macOS app"},
+                    "app_dir": {"type": "string", "description": "Directory for the Electron app (default: desktop-app)"},
+                    "backend_command": {
+                        "type": "string",
+                        "description": "Command to start the local backend. May include {port}. Leave empty to auto-detect.",
+                    },
+                    "start_url": {
+                        "type": "string",
+                        "description": "URL the Electron window should load. May include {port}.",
+                    },
+                    "health_path": {
+                        "type": "string",
+                        "description": "Health endpoint path or full URL to wait for before loading (e.g. /health).",
+                    },
+                    "port": {"type": "integer", "description": "Preferred localhost port (default: 8765)"},
+                    "overwrite": {"type": "boolean", "description": "Overwrite existing scaffold files if app_dir exists"},
+                },
+                "required": [],
+            },
+        },
+        scaffold_macos_app,
+    )
+
     # ── GitHub tools ─────────────────────────────────────────────────────────
 
     reg.register(
@@ -185,7 +357,7 @@ def get_default_registry() -> ToolRegistry:
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "repo": {"type": "string", "description": "owner/repo e.g. 'afstudy20-gif/Cclaude'"},
+                    "repo": {"type": "string", "description": "owner/repo e.g. 'afstudy20-gif/Clod'"},
                     "path": {"type": "string", "description": "File path inside the repo e.g. 'src/api.py'"},
                     "ref": {"type": "string", "description": "Branch, tag or commit SHA (default: HEAD)"},
                     "token": {"type": "string", "description": "GitHub token (optional, uses GITHUB_TOKEN env var if omitted)"},

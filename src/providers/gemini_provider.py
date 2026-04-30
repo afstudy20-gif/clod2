@@ -10,6 +10,11 @@ from .base import BaseProvider, Message, ToolCall
 
 class GeminiProvider(BaseProvider):
     name = "Google (Gemini)"
+    API_NAME = "google-generative-ai"
+    SUPPORTS_IMAGES = True
+    CONTEXT_WINDOW = 1_000_000
+    MAX_OUTPUT_TOKENS = 8096
+    REASONING_MODEL_MARKERS = ("2.5", "pro")
 
     DEFAULT_MODELS = {
         "gemini-2.5-pro": "gemini-2.5-pro",

@@ -10,104 +10,61 @@ from ..tools.registry import ToolRegistry
 from .context import trim_history
 from .skills import load_project_instructions
 
-SYSTEM_PROMPT = """You are an AI coding assistant (similar to Claude Code) running in the terminal.
-You help users with software engineering tasks: writing code, debugging, refactoring, explaining code, running commands, and navigating codebases.
+SYSTEM_PROMPT = """You are Clod, an autonomous AI Software Engineer created by Yusuf Hosoglu.
+Your goal is to write, debug, and manage code with high reliability.
 
-You have access to tools that let you:
-- Read, write, and edit files
-- Run shell commands
-- Search files by name (glob) or content (grep)
-- List directories
-
-Guidelines:
-- You HAVE access to the tools listed below. Use them whenever needed.
-- IMPORTANT: You are NOT just a chat model; you are an active agent.
-- When the user asks to debug, investigate, fix an error, or find why something fails, use the tools to inspect files, run commands, reproduce the issue, and apply a fix when appropriate.
-- Do not answer with generic limitations such as not having an IDE debugger. You can debug through file inspection, logs, tests, shell commands, and targeted edits.
-- Do not write hypothetical tool calls. If you need to edit a file, emit a real structured tool call for edit_file or write_file.
+Follow these strict principles:
+1. Sandboxed Execution: Always test your code using `execute_sandbox_python` (Docker) before claiming it works. Never push untested logic.
+2. File Operations: When asked to modify a file, READ it first using `read_file` to understand the current state, then use `write_file` or `edit_file` to apply changes.
+3. GitHub Workflows:
+   - For EXISTING repositories: Always use `github_sync`. It will automatically pull changes from other developers before pushing your updates.
+   - For NEW repositories: Write the files, test them, then use `github_sync` with a `remote_url`.
+4. Autonomy: Do not ask for permission to run tests or read files. Do it automatically and report the final result.
 
 AVAILABLE TOOLS:
 - read_file(path, offset, limit): Open and view source code, configs, documentation.
 - write_file(path, content): Create new files with specific content.
 - edit_file(path, old_string, new_string): Make targeted changes to existing code.
-- bash(command): Execute bash commands, run tests, install packages, git operations.
-- git_init(): Initialize a git repository in the project root.
+- bash(command): Execute bash commands, run tests, install packages.
+- github_sync(commit_message, branch_name, remote_url): Advanced git tool. Pulls before pushing, or initializes if new.
 - grep_search(pattern, path): Search for code patterns using regex.
 - list_dir(path): List directories to understand project structure.
 - glob_files(pattern): Find files matching a glob pattern.
+- execute_sandbox_python(code): Execute Python code safely inside an isolated Docker container.
+- scaffold_macos_app(app_name, app_dir, backend_command, start_url, health_path, port, overwrite): Create an Electron macOS app wrapper.
 
-MANDATORY RULE:
-- Your VERY FIRST action in any new conversation or project MUST be to call `list_dir(".")` to verify your environment and prove to the user that you are connected. Do not skip this.
-- If you claim you don't have access, you are hallucinating.
-
-Format for calling tools:
-{"name": "write_file", "arguments": {"path": "main.py", "content": "print('hello')"}}
+MANDATORY START:
+- Your VERY FIRST action in any new conversation MUST be to call `list_dir(".")` to verify your environment.
 """
 
 EXPLORE_SYSTEM_PROMPT = """You are in EXPLORE MODE. Help the user understand the codebase.
-
-You can ONLY use read-only tools: read_file, glob, grep, list_dir, github_read_file, github_list_dir, github_search_code.
-DO NOT modify any files. Focus on explaining code, architecture, patterns, and relationships.
-When the user asks about code, read the relevant files and explain clearly.
-Provide thorough analysis with file paths and line references.
+You can ONLY use read-only tools: read_file, glob_files, grep_search, list_dir.
+DO NOT modify any files. Focus on explaining code, architecture, and patterns.
 """
 
-PLAN_SYSTEM_PROMPT = """You are in PLAN MODE. Your task is to explore the codebase using the provided read-only tools and produce a structured implementation plan.
-
-DO NOT modify any files in this mode. You may only use read-only tools.
-
-After exploring, produce a plan in this format:
-
+PLAN_SYSTEM_PROMPT = """You are in PLAN MODE. Explore the codebase and produce a structured implementation plan.
+DO NOT modify any files. Use read-only tools.
+After exploring, produce a plan in markdown format:
 ## Plan
-1. [Step with file path and description of change]
-2. ...
-
-## Files to Modify
-- path/to/file.py - description of changes
-
-## Files to Create
-- path/to/new_file.py - purpose
-
+1. [Step]
+## Files to Modify/Create
+- [path]
 ## Risks
-- potential issues or edge cases
+- [risks]
 """
 
-BUILD_SYSTEM_PROMPT = """You are in BUILD / DEBUG MODE. Your task is to implement requested features, create files, run git or shell workflows, and diagnose/fix bugs.
+BUILD_SYSTEM_PROMPT = """You are in BUILD / DEBUG MODE. Implement features, fix bugs, and sync to GitHub.
+Follow the "Read-Test-Sync" workflow:
+1. READ: Inspect existing code before editing.
+2. TEST: Use `execute_sandbox_python` or `bash` to verify your changes.
+3. SYNC: Use `github_sync` to commit and push. It handles pulling from others automatically.
 
-CRITICAL: You MUST use the tools (write_file, edit_file, bash) immediately. 
-
-- DO NOT explain yourself. 
-- DO NOT say "I will now create...".
-- DO NOT write "hypothetical tool call" or say direct editing is not supported.
+- DO NOT explain yourself.
 - JUST OUTPUT THE JSON TOOL CALL.
-- For file contents, ALWAYS use write_file with a JSON string content value.
-- Do NOT use bash, echo, printf, cat, heredocs, or shell redirection to create HTML, CSS, JavaScript, JSON, Python, or other source files.
-- Use bash only for simple commands like mkdir, npm install, or running tests.
-- Do NOT run git commands or git tools unless the user explicitly asks for git, commit, branch, push, pull, or repository initialization.
-- The host can be macOS, Linux, or Windows. Prefer portable commands. For port checks/cleanup, prefer `lsof -ti tcp:PORT` on macOS/Linux and PowerShell `Get-NetTCPConnection` on Windows; unsupported Linux-only commands may be normalized by the tool layer.
-- If a branch may already exist, use `git checkout branch` or `git switch branch` instead of `git checkout -b branch`.
-- For debugging tasks, inspect files, reproduce or verify the issue with bash when possible, then fix it with write_file or edit_file when a code change is needed.
-- For remote git tasks, report the exact terminal output of git commands and never claim a push succeeded if the command returned an error.
-
-If the directory is empty, start with the main application files (e.g., main.py, requirements.txt, index.html).
-
-Do not stop until the requested work is implemented, verified, or blocked by a real tool error that you report accurately.
+- For file contents, ALWAYS use write_file or edit_file.
 """
 
-DEBUG_SYSTEM_PROMPT = """You are in DEBUG MODE. Your task is to diagnose and fix bugs using the available filesystem and shell tools.
-
-CRITICAL: You MUST use tools immediately.
-
-- Start by inspecting the project with list_dir(".") unless recent context already shows the relevant files.
-- Read the relevant source files and run a command that reproduces or checks the issue when possible.
-- Do NOT say you lack an IDE debugger, breakpoints, or step-through debugging.
-- Do NOT write "hypothetical tool call" or say direct editing is not supported.
-- Use bash for tests, linters, logs, or simple runtime checks.
-- Use read_file, grep, and glob to understand the code before changing it.
-- Use edit_file or write_file to fix the bug when the cause is clear.
-- For JavaScript, HTML, CSS, JSON, or other source-file edits, prefer read_file followed by write_file with the complete corrected file content when edit_file quoting would be fragile.
-- After a fix, run the most relevant verification command.
-"""
+DEBUG_SYSTEM_PROMPT = BUILD_SYSTEM_PROMPT + "\nFocus specifically on diagnosing the root cause before applying fixes."
 
 
 class Agent:
@@ -122,16 +79,16 @@ class Agent:
         self.registry = registry
         self.max_tool_rounds = max_tool_rounds
         self.history: list[Message] = []
-        self.mode: str = "normal"  # "normal", "explore", "plan"
+        self.mode: str = "normal"  # "normal", "explore", "plan", "build", "debug"
         self.project_root = project_root
         self.session_id: str | None = None
         
         # Load project-specific instructions
         self.instructions = load_project_instructions(project_root)
         
-        # Also load global CClaude base instructions/skills
-        cclaude_base = Path(__file__).parent.parent.parent
-        global_instr = load_project_instructions(str(cclaude_base))
+        # Also load global Clod base instructions/skills
+        clod_base = Path(__file__).parent.parent.parent
+        global_instr = load_project_instructions(str(clod_base))
         if global_instr:
             self.instructions = (self.instructions + "\n\n" + global_instr).strip()
 
@@ -147,8 +104,6 @@ class Agent:
         else:
             base = SYSTEM_PROMPT
 
-        if self.project_root:
-            base += f"\n\nProject root: {self.project_root}"
             base += "\nAll relative paths should be resolved from this directory."
             if self.instructions:
                 base += (
@@ -251,6 +206,8 @@ class Agent:
                     role="assistant",
                     content=assistant_text,
                     tool_calls=tool_calls_seen,
+                    provider=getattr(self.provider, "name", ""),
+                    model=getattr(self.provider, "model", ""),
                 )
             )
 
@@ -359,7 +316,7 @@ class Agent:
                 repeat_key = self._tool_call_key(tc)
                 recent_tool_call_keys[repeat_key] = recent_tool_call_keys.get(repeat_key, 0) + 1
                 if recent_tool_call_keys[repeat_key] > 1:
-                    is_safe_repeat = self._is_idempotent_process_tool_call(tc)
+                    is_safe_repeat = self._is_safe_repeated_tool_call(tc)
                     result = self._repeated_tool_call_message(tc, is_safe_repeat)
                     if not is_safe_repeat:
                         last_tool_error = f"{tc.name}: {result[:2000]}"
@@ -388,6 +345,9 @@ class Agent:
                 is_error = self._is_tool_result_error(result)
                 if is_error:
                     last_tool_error = f"{tc.name}: {result[:2000]}"
+                elif self._is_completion_action_tool(tc):
+                    # Repo/file state changed; repeated status/diff checks are now meaningful again.
+                    recent_tool_call_keys.clear()
                 yield ToolEvent(
                     type="result",
                     tool_name=tc.name,
@@ -627,8 +587,24 @@ class Agent:
             and ("|| true" in command or "2>/dev/null" in command)
         )
 
+    def _is_safe_repeated_tool_call(self, call: ToolCall) -> bool:
+        if call.name in {
+            "read_file",
+            "glob",
+            "grep",
+            "list_dir",
+            "git_status",
+            "git_diff",
+            "git_log",
+            "github_read_file",
+            "github_list_dir",
+            "github_search_code",
+        }:
+            return True
+        return self._is_idempotent_process_tool_call(call)
+
     def _repeated_tool_call_message(self, call: ToolCall, skipped: bool) -> str:
-        prefix = "Skipped repeated process check/cleanup command" if skipped else "Error: Repeated identical tool call blocked"
+        prefix = "Skipped repeated safe read/check command" if skipped else "Error: Repeated identical tool call blocked"
         message = (
             f"{prefix}: {call.name} {json.dumps(call.arguments, ensure_ascii=False)}. "
             "Do not repeat the same command. If the task is complete, respond with the final summary. "
@@ -665,8 +641,10 @@ class Agent:
             "github_delete_file",
         }
 
-    def _is_tool_result_error(self, result: str) -> bool:
-        lowered = result.lstrip().lower()
+    def _is_tool_result_error(self, result: str | None) -> bool:
+        if result is None:
+            return True
+        lowered = str(result).lstrip().lower()
         return (
             lowered.startswith("error:")
             or lowered.startswith("tool call error")

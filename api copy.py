@@ -1,4 +1,4 @@
-"""FastAPI web interface for Cclaude — wraps the multi-provider agent."""
+"""FastAPI web interface for Clod — wraps the multi-provider agent."""
 import json
 import os
 import subprocess
@@ -14,7 +14,7 @@ from src.core.config import get_api_key, load_config
 from src.core.session import list_sessions, load_session, save_session, delete_session
 from src.providers import get_provider, PROVIDERS
 
-app = FastAPI(title="Cclaude API", version="0.1.0")
+app = FastAPI(title="Clod API", version="0.1.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -64,7 +64,7 @@ def root():
     index = Path(__file__).parent / "static" / "index.html"
     if index.exists():
         return FileResponse(str(index))
-    return {"name": "Cclaude API", "version": "0.1.0", "docs": "/docs"}
+    return {"name": "Clod API", "version": "0.1.0", "docs": "/docs"}
 
 
 @app.get("/health")
@@ -348,7 +348,7 @@ def git_push(req: WorkspaceRequest):
         if not (ws_path / ".git").exists():
             # Initialize if not
             run_cmd(["git", "init"])
-            run_cmd(["git", "remote", "add", "origin", "https://github.com/afstudy20-gif/Cclaude.git"])
+            run_cmd(["git", "remote", "add", "origin", "https://github.com/afstudy20-gif/Clod.git"])
         
         # Add all
         run_cmd(["git", "add", "."])
@@ -358,7 +358,7 @@ def git_push(req: WorkspaceRequest):
         if not check.stdout.strip():
             return {"ok": True, "output": "No changes to commit"}
             
-        commit_msg = "Update from CClaude assistant"
+        commit_msg = "Update from Clod assistant"
         run_cmd(["git", "commit", "-m", commit_msg])
         
         # Push

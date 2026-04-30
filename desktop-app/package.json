@@ -1,0 +1,49 @@
+{
+  "name": "clod",
+  "version": "0.1.0",
+  "description": "macOS desktop shell for Clod",
+  "main": "main.js",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "package:mac": "electron-builder --mac --dir",
+    "dist:mac": "electron-builder --mac dmg zip"
+  },
+  "build": {
+    "appId": "com.clod.clod",
+    "productName": "Clod",
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "target": [
+        "dir",
+        "dmg",
+        "zip"
+      ]
+    },
+    "files": [
+      "main.js",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "../",
+        "to": "app",
+        "filter": [
+          "**/*",
+          "!/Users/yh/Desktop/clod2/clod-agent/desktop-app/**",
+          "!node_modules/**",
+          "!.git/**",
+          "!venv/**",
+          "!.venv/**",
+          "!__pycache__/**",
+          "!*.pyc",
+          "!.DS_Store"
+        ]
+      }
+    ]
+  },
+  "devDependencies": {
+    "electron": "^30.5.1",
+    "electron-builder": "^24.13.3"
+  }
+}

@@ -1,7 +1,7 @@
 """Tavily search provider.
 
 Tavily is not a chat-completion LLM. This adapter exposes Tavily search modes
-through the same provider interface so CClaude can use it from the model picker.
+through the same provider interface so Clod can use it from the model picker.
 """
 from typing import Iterator
 
@@ -13,6 +13,9 @@ from .base import BaseProvider, Message, ToolCall
 class TavilyProvider(BaseProvider):
     name = "Tavily Search"
     SEARCH_URL = "https://api.tavily.com/search"
+    API_NAME = "tavily-search"
+    SUPPORTS_TOOLS = False
+    CONTEXT_WINDOW = 32_000
 
     DEFAULT_MODELS = {
         "tavily-search": "tavily-search",

@@ -7,7 +7,19 @@ from dotenv import load_dotenv
 
 load_dotenv()  # Load .env if present
 
-CONFIG_FILE = Path.home() / ".cclaude" / "config.json"
+def get_config_dir() -> Path:
+    """Determine the configuration directory: local .clod or home .clod."""
+    # Try project root first (2 levels up from src/core/config.py)
+    root = Path(__file__).resolve().parents[2]
+    p = root / ".clod"
+    if p.is_dir():
+        return p
+    # Fallback to ~/.clod
+    return Path.home() / ".clod"
+
+
+CONFIG_DIR = get_config_dir()
+CONFIG_FILE = CONFIG_DIR / "config.json"
 
 
 def load_config() -> dict:
@@ -28,7 +40,6 @@ def save_config(config: dict):
 def get_api_key(provider: str, config: dict | None = None) -> str | None:
     """Get API key for a provider from env vars or config file."""
     env_map = {
-        "claude": "ANTHROPIC_API_KEY",
         "anthropic": "ANTHROPIC_API_KEY",
         "openai": "OPENAI_API_KEY",
         "chatgpt": "OPENAI_API_KEY",
@@ -61,6 +72,8 @@ def get_api_key(provider: str, config: dict | None = None) -> str | None:
             return val
 
     if config:
+        if key_lower in ("gemini", "google") and config.get("oauth", {}).get("google"):
+            return "__oauth__"
         keys = config.get("api_keys", {})
         return keys.get(key_lower)
     return None

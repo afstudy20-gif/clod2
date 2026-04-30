@@ -1,5 +1,6 @@
 const vscode = require("vscode");
 const path = require("path");
+const fs = require("fs");
 const { spawn } = require("child_process");
 
 let panel;
@@ -35,7 +36,37 @@ function getWorkspacePath() {
 function getBackendPath(context) {
   const configured = getConfig().get("backendPath", "");
   if (configured && configured.trim()) return configured.trim();
-  return path.resolve(context.extensionPath, "..");
+
+  const candidates = [
+    path.resolve(context.extensionPath, ".."),
+    getWorkspacePath(),
+    "/Users/yh/Desktop/clod2/clod-agent",
+    path.join(process.env.HOME || "", "Desktop", "clod2", "clod-agent"),
+  ].filter(Boolean);
+
+  for (const candidate of candidates) {
+    if (fs.existsSync(path.join(candidate, "api.py"))) return candidate;
+  }
+
+  return candidates[0] || path.resolve(context.extensionPath, "..");
+}
+
+function getPythonPath() {
+  const configured = getConfig().get("pythonPath", "");
+  if (configured && configured.trim() && configured !== "python3") return configured.trim();
+
+  const candidates = [
+    "/Users/yh/Desktop/clod2/clod-agent/.venv/bin/python",
+    "/Users/yh/Desktop/clod2/venv/bin/python",
+    path.join(process.env.HOME || "", "Desktop", "clod2", "clod-agent", ".venv", "bin", "python"),
+    path.join(process.env.HOME || "", "Desktop", "clod2", "venv", "bin", "python"),
+  ];
+
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) return candidate;
+  }
+
+  return configured || "python3";
 }
 
 async function startBackend(context) {
@@ -44,8 +75,13 @@ async function startBackend(context) {
     return;
   }
 
-  const python = getConfig().get("pythonPath", "python3");
+  const python = getPythonPath();
   const backendPath = getBackendPath(context);
+  const apiPath = path.join(backendPath, "api.py");
+  if (!fs.existsSync(apiPath)) {
+    vscode.window.showErrorMessage(`Clod backend not found at ${backendPath}. Set clod.backendPath to the folder containing api.py.`);
+    return;
+  }
   const terminalName = "Clod Backend";
 
   backendProcess = spawn(
