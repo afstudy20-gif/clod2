@@ -943,10 +943,15 @@
   <div class="modal" style="max-width: 500px;">
     <button class="modal-close" onclick="closeModelManageModal()">&times;</button>
     <h2 id="model-manage-title">Manage Models</h2>
-    <p style="color:var(--text3);font-size:12px;margin-bottom:16px;">
-      Uncheck models to hide them from the main dropdown. 
-      Click "Update Models" to restore defaults.
-    </p>
+    <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 12px; gap: 10px;">
+      <p style="color:var(--text3);font-size:12px;margin:0;">
+        Uncheck models to hide them from the main dropdown. 
+        Click "Update Models" to restore defaults.
+      </p>
+      <label style="font-size:12px; display:flex; align-items:center; gap:6px; cursor:pointer; color:var(--text2); user-select:none; white-space:nowrap;">
+        <input type="checkbox" id="model-manage-select-all" onclick="toggleAllModels(this.checked)"> Select All
+      </label>
+    </div>
     <div id="model-manage-list" class="model-manage-list"></div>
     <div style="margin-top: 16px; display: flex; gap: 8px;">
       <button class="settings-btn" id="modal-test-all-btn" onclick="testAllModels()" style="flex:1">Test All</button>
@@ -1212,6 +1217,10 @@ function openModelManageModal() {
     `;
   }).join('');
   
+  // Set the select all checkbox state
+  const selectAllCb = document.getElementById('model-manage-select-all');
+  selectAllCb.checked = (pDisabled.length === 0 && providerModels.length > 0);
+  
   document.getElementById('model-manage-modal').classList.add('open');
 }
 
@@ -1335,7 +1344,32 @@ function toggleModelVisibility(provider, modelId) {
   
   providerModels.forEach((m, i) => {
     const cb = items[i].querySelector('input');
-    cb.checked = !pDisabled.includes(m);
+    if (cb) cb.checked = !pDisabled.includes(m);
+  });
+  
+  const selectAllCb = document.getElementById('model-manage-select-all');
+  if (selectAllCb) selectAllCb.checked = (pDisabled.length === 0 && providerModels.length > 0);
+}
+
+function toggleAllModels(checked) {
+  const p = document.getElementById('provider-select').value;
+  const providerModels = MODELS[p] || [];
+  
+  if (checked) {
+    // Enable all -> Clear disabled list
+    disabledModels[p] = [];
+  } else {
+    // Disable all -> Add all to disabled list
+    disabledModels[p] = [...providerModels];
+  }
+  localStorage.setItem('clod_disabled_models', JSON.stringify(disabledModels));
+  
+  // Update UI checkboxes
+  const list = document.getElementById('model-manage-list');
+  const items = list.querySelectorAll('.model-manage-item');
+  items.forEach(item => {
+    const cb = item.querySelector('input');
+    if (cb) cb.checked = checked;
   });
 }
 
