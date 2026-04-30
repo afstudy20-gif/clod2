@@ -65,7 +65,10 @@ class ToolRunRequest(BaseModel):
 def root():
     index = Path(__file__).parent / "static" / "index.html"
     if index.exists():
-        return FileResponse(str(index))
+        return FileResponse(
+            str(index), 
+            headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"}
+        )
     return {"name": "Clod API", "creator": "Yusuf Hosoglu", "version": "0.1.0", "docs": "/docs"}
 
 

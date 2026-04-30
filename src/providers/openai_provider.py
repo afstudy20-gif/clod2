@@ -65,9 +65,15 @@ class OpenAICompatibleProvider(BaseProvider):
             "model": self.model,
             "messages": formatted,
             "stream": True,
-            "temperature": 0.0,  # Use 0 for more stable/predictable code generation
-            "max_tokens": getattr(self, "MAX_TOKENS", 4096),
+            "temperature": 1.0 if any(m in self.model.lower() for m in ("o1", "o3")) else 0.0, # Reasoning models often require temp 1
         }
+        
+        # Use max_completion_tokens for newer OpenAI models (o1, o3, o4, gpt-5+)
+        max_tokens = getattr(self, "MAX_TOKENS", 4096)
+        if any(marker in self.model.lower() for marker in ("o1", "o3", "o4", "gpt-5")):
+            kwargs["max_completion_tokens"] = max_tokens
+        else:
+            kwargs["max_tokens"] = max_tokens
         if openai_tools:
             kwargs["tools"] = openai_tools
             kwargs["tool_choice"] = "auto"

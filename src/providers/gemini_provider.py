@@ -77,10 +77,20 @@ class GeminiProvider(BaseProvider):
         # Get the last user message
         last_content = _get_last_content(messages)
 
+        # Apply dynamic generation config
+        gen_config = {
+            "max_output_tokens": getattr(self, "MAX_OUTPUT_TOKENS", 8096),
+            "temperature": 0.0,
+        }
+        
+        # Adjust for specific reasoning models if necessary
+        if "thinking" in self.model.lower():
+            gen_config["temperature"] = 1.0 # Thinking models often perform better at 1.0
+
         response = chat.send_message(
             last_content,
             stream=True,
-            generation_config=genai.types.GenerationConfig(max_output_tokens=8096),
+            generation_config=genai.types.GenerationConfig(**gen_config),
         )
 
         for chunk in response:
