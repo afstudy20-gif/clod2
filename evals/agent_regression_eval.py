@@ -18,7 +18,7 @@ from src.core.session import export_context, import_context
 from src.providers import PROVIDERS
 from src.providers.base import Message, ToolCall
 from src.tools.registry import get_default_registry
-from api import _load_cached_remote, _looks_like_git_remote_url, _resolve_git_worktree, _save_cached_remote
+from api import _extract_prior_tool_calls, _load_cached_remote, _looks_like_git_remote_url, _resolve_git_worktree, _save_cached_remote
 
 
 class FakeProvider:
@@ -73,6 +73,30 @@ def main():
         raise AssertionError("git_diff repeat should be safe")
     if agent._is_safe_repeated_tool_call(ToolCall(id="3", name="git_push", arguments={})):
         raise AssertionError("git_push repeat should not be safe")
+    previous_ui_messages = [
+        type("Msg", (), {"toolEvents": [{"type": "start", "name": "bash", "arguments": {"command": "ps aux | grep -E 'vite|node.*vite' | grep -v grep"}}]})(),
+        type("Msg", (), {"toolEvents": []})(),
+    ]
+    prior_calls = _extract_prior_tool_calls(previous_ui_messages, ToolCall)
+    if len(prior_calls) != 1:
+        raise AssertionError(f"browser toolEvents were not recovered: {prior_calls}")
+    agent.prior_tool_calls = prior_calls
+    seeded: dict[tuple[str, str], int] = {}
+    agent.mode = "debug"
+    agent._seed_recent_tool_call_keys(seeded)
+    repeat_key = agent._tool_call_key(ToolCall(id="4", name="bash", arguments={"command": "ps aux | grep -E 'vite|node' | grep -v grep"}))
+    if seeded.get(repeat_key) != 1:
+        raise AssertionError(f"prior equivalent command did not seed repeat detection: {seeded}, {repeat_key}")
+    agent.mode = "build"
+    if not agent._can_finish_action_mode(False, False, True, "Verified diagnosis."):
+        raise AssertionError("build mode should allow a final answer after local investigation")
+    grep_call = ToolCall(id="5", name="bash", arguments={"command": "rg -n 'person-toggle-active|togglePersonActive' src"})
+    if agent._is_completion_action_tool(grep_call):
+        raise AssertionError("bash grep/rg searches should not clear repeat memory as completion actions")
+    if not agent._is_no_match_result("No matches for: person-toggle-active"):
+        raise AssertionError("No-match search results should be recognized as diagnostic evidence")
+    if not agent._is_low_progress_round([ToolCall(id="6", name="grep", arguments={"pattern": "handleAction"})]):
+        raise AssertionError("repeated grep-only rounds should count as low-progress probing")
 
     # Temporary test project generation & macOS app packaging eval
     print("Testing scaffold_macos_app in a temporary project...")

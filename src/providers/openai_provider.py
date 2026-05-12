@@ -34,22 +34,55 @@ class OpenAICompatibleProvider(BaseProvider):
             timeout=180.0,  # Increased to 3 minutes for slower NIM models
         )
 
+    _model_cache: dict[str, tuple[float, list[str]]] = {}
+    _MODEL_CACHE_TTL = 86_400.0  # 24h
+
     @classmethod
     def fetch_available_models(cls, api_key: str) -> list[str]:
-        """Fetch models from the OpenAI-compatible /v1/models endpoint."""
+        """Fetch models from the OpenAI-compatible /v1/models endpoint with 24h cache."""
+        import time as _time
         base = cls.BASE_URL or "https://api.openai.com/v1"
-        resp = requests.get(
-            f"{base}/models",
-            headers={"Authorization": f"Bearer {api_key}"},
-            timeout=10,
-        )
-        resp.raise_for_status()
-        data = resp.json().get("data", [])
-        ids = sorted(
-            m["id"] for m in data
-            if not any(ex in m["id"].lower() for ex in cls._EXCLUDE_PATTERNS)
-        )
-        return ids if ids else list(cls.DEFAULT_MODELS.values())
+        cache_key = f"{cls.__name__}:{base}:{api_key[:8]}"
+        cached = cls._model_cache.get(cache_key)
+        if cached and (_time.time() - cached[0]) < cls._MODEL_CACHE_TTL:
+            return cached[1]
+        try:
+            resp = requests.get(
+                f"{base}/models",
+                headers={"Authorization": f"Bearer {api_key}"},
+                timeout=10,
+            )
+            resp.raise_for_status()
+            data = resp.json().get("data", [])
+            ids = sorted(
+                m["id"] for m in data
+                if not any(ex in m["id"].lower() for ex in cls._EXCLUDE_PATTERNS)
+            )
+            result = ids if ids else list(cls.DEFAULT_MODELS.values())
+        except Exception:
+            if cached:
+                return cached[1]
+            result = list(cls.DEFAULT_MODELS.values())
+        cls._model_cache[cache_key] = (_time.time(), result)
+        return result
+
+    # Per-model capability hooks. Subclasses override these to mark certain
+    # models as not supporting tools or as having a lower max_tokens cap.
+    NO_TOOL_PATTERNS: tuple[str, ...] = ()
+    MAX_TOKENS_BY_PATTERN: dict[str, int] = {}
+
+    def _model_supports_tools(self, model: str) -> bool:
+        if not getattr(self, "SUPPORTS_TOOLS", True):
+            return False
+        m = (model or "").lower()
+        return not any(p in m for p in self.NO_TOOL_PATTERNS)
+
+    def _model_max_tokens(self, model: str) -> int:
+        m = (model or "").lower()
+        for pat, mx in self.MAX_TOKENS_BY_PATTERN.items():
+            if pat in m:
+                return mx
+        return getattr(self, "MAX_TOKENS", 4096)
 
     def stream_response(
         self,
@@ -58,19 +91,31 @@ class OpenAICompatibleProvider(BaseProvider):
         system: str,
     ) -> Iterator[str | ToolCall]:
         formatted = self._format_messages(messages, system)
-        openai_tools = self._convert_tools(tools) if getattr(self, "SUPPORTS_TOOLS", True) else []
+        model_supports_tools = self._model_supports_tools(self.model)
+        openai_tools = self._convert_tools(tools) if model_supports_tools else []
         self._suppress_content = False
+
+        model_lower = self.model.lower()
+        reasoning_markers = getattr(self, "REASONING_MODEL_MARKERS", ())
+        is_openai_reasoning = any(m in model_lower for m in ("o1", "o3", "o4", "gpt-5"))
+        is_provider_reasoning = bool(reasoning_markers) and any(m in model_lower for m in reasoning_markers)
+
+        if is_openai_reasoning:
+            temperature = 1.0
+        elif is_provider_reasoning:
+            temperature = 0.6
+        else:
+            temperature = 0.0
 
         kwargs: dict = {
             "model": self.model,
             "messages": formatted,
             "stream": True,
-            "temperature": 1.0 if any(m in self.model.lower() for m in ("o1", "o3")) else 0.0, # Reasoning models often require temp 1
+            "temperature": temperature,
         }
-        
-        # Use max_completion_tokens for newer OpenAI models (o1, o3, o4, gpt-5+)
-        max_tokens = getattr(self, "MAX_TOKENS", 4096)
-        if any(marker in self.model.lower() for marker in ("o1", "o3", "o4", "gpt-5")):
+
+        max_tokens = self._model_max_tokens(self.model)
+        if is_openai_reasoning:
             kwargs["max_completion_tokens"] = max_tokens
         else:
             kwargs["max_tokens"] = max_tokens
@@ -78,16 +123,7 @@ class OpenAICompatibleProvider(BaseProvider):
             kwargs["tools"] = openai_tools
             kwargs["tool_choice"] = "auto"
 
-        try:
-            stream = self.client.chat.completions.create(**kwargs)
-        except RateLimitError as exc:
-            raise RuntimeError(self._format_rate_limit_error(exc)) from exc
-        except APIStatusError as exc:
-            if exc.status_code == 429:
-                raise RuntimeError(self._format_rate_limit_error(exc)) from exc
-            if exc.status_code == 404:
-                raise RuntimeError(self._format_not_found_error(exc)) from exc
-            raise
+        stream = self._open_stream_with_retry(kwargs)
         tool_calls_map: dict[int, dict] = {}
 
         try:
@@ -118,21 +154,12 @@ class OpenAICompatibleProvider(BaseProvider):
 
                 finish = chunk.choices[0].finish_reason if chunk.choices else None
                 if finish == "length":
-                    raise RuntimeError(
-                        "Model output was truncated before completion. "
-                        "No reliable tool call can be executed from this partial response. "
-                        "Try a shorter request, a larger-output model, or build mode."
+                    yield (
+                        "\n\n[warning: output truncated at max_tokens limit. "
+                        "Partial response above. Retry with shorter prompt or larger-output model.]"
                     )
                 if finish == "content_filter":
                     raise RuntimeError("Model output was blocked by the provider content filter.")
-                if finish in ("tool_calls", "stop") and tool_calls_map:
-                    for tc in tool_calls_map.values():
-                        try:
-                            args = json.loads(tc["args"]) if tc["args"] else {}
-                        except json.JSONDecodeError:
-                            args = {"raw": tc["args"]}
-                        yield ToolCall(id=tc["id"], name=tc["name"], arguments=args)
-                    tool_calls_map.clear()
         except RateLimitError as exc:
             raise RuntimeError(self._format_rate_limit_error(exc)) from exc
         except APIStatusError as exc:
@@ -145,6 +172,70 @@ class OpenAICompatibleProvider(BaseProvider):
             raise RuntimeError(self._format_stream_interrupted_error(exc)) from exc
         except NotFoundError as exc:
             raise RuntimeError(self._format_not_found_error(exc)) from exc
+
+        for tc in tool_calls_map.values():
+            try:
+                args = json.loads(tc["args"]) if tc["args"] else {}
+            except json.JSONDecodeError:
+                args = {"raw": tc["args"]}
+            yield ToolCall(id=tc["id"], name=tc["name"], arguments=args)
+
+    def _open_stream_with_retry(self, kwargs: dict):
+        """Open the streaming chat completion, auto-recovering from 400/422
+        errors that complain about tool_choice/tools/max_tokens.
+
+        Many OpenAI-compatible endpoints (NVIDIA NIM gemma/qwen, etc.) reject
+        `tools=`/`tool_choice="auto"` when the served model wasn't started with
+        tool-calling enabled, or reject `max_tokens > 4096`. Rather than
+        bubbling a confusing error, we strip the offending fields and retry
+        once. The user still gets a useful answer; tool calling is silently
+        disabled for that one model.
+        """
+        attempts = 0
+        last: Exception | None = None
+        while attempts < 3:
+            try:
+                return self.client.chat.completions.create(**kwargs)
+            except RateLimitError as exc:
+                raise RuntimeError(self._format_rate_limit_error(exc)) from exc
+            except APIStatusError as exc:
+                if exc.status_code == 429:
+                    raise RuntimeError(self._format_rate_limit_error(exc)) from exc
+                if exc.status_code == 404:
+                    raise RuntimeError(self._format_not_found_error(exc)) from exc
+                if exc.status_code in (400, 422):
+                    msg = ""
+                    try:
+                        msg = str(getattr(exc, "message", "") or exc)
+                    except Exception:
+                        msg = str(exc)
+                    msg_l = msg.lower()
+                    mutated = False
+                    if any(s in msg_l for s in (
+                        "tool_choice", "tools", "tool use", "auto tool choice",
+                        "tool-call-parser", "enable-auto-tool-choice",
+                    )):
+                        if kwargs.pop("tools", None) is not None:
+                            mutated = True
+                        if kwargs.pop("tool_choice", None) is not None:
+                            mutated = True
+                    if "max_tokens" in msg_l or "max_completion_tokens" in msg_l:
+                        # NVIDIA gateway caps some models at <= 4096 even
+                        # when the model itself accepts more.
+                        for key in ("max_tokens", "max_completion_tokens"):
+                            cur = kwargs.get(key)
+                            if isinstance(cur, int) and cur > 2048:
+                                kwargs[key] = 2048
+                                mutated = True
+                    if mutated:
+                        attempts += 1
+                        last = exc
+                        continue
+                raise
+            attempts += 1
+        if last:
+            raise last
+        return self.client.chat.completions.create(**kwargs)
 
     def _format_stream_interrupted_error(self, exc: Exception) -> str:
         if isinstance(self, NvidiaProvider):
@@ -162,7 +253,14 @@ class OpenAICompatibleProvider(BaseProvider):
         retry_after = None
         response = getattr(exc, "response", None)
         if response is not None:
-            retry_after = response.headers.get("retry-after")
+            retry_after = response.headers.get("retry-after") or response.headers.get("Retry-After")
+        if retry_after:
+            try:
+                wait = float(retry_after)
+                import time as _time
+                _time.sleep(min(wait, 30.0))
+            except (TypeError, ValueError):
+                pass
         suffix = f" Retry after about {retry_after} seconds." if retry_after else " Wait a bit and retry."
         if isinstance(self, NvidiaProvider):
             return (
@@ -176,8 +274,8 @@ class OpenAICompatibleProvider(BaseProvider):
             return (
                 f"NVIDIA NIM model/function for '{self.model}' was not found for this account (HTTP 404). "
                 "This usually means the model ID is unavailable, deprecated, or not enabled for your free key. "
-                "Use Update Models to refresh the live catalog, or switch to qwen/qwen3-coder-480b-a35b-instruct, "
-                "moonshotai/kimi-k2-instruct-0905, nvidia/nemotron-3-super-120b-a12b, or nvidia/nemotron-3-nano-30b-a3b if available."
+                "Use Update Models to refresh the live catalog, or switch to meta/llama-3.3-70b-instruct, "
+                "nvidia/llama-3.3-nemotron-super-49b-v1, qwen/qwen2.5-coder-32b-instruct, or deepseek-ai/deepseek-r1."
             )
         return f"Provider model/function for '{self.model}' was not found (HTTP 404)."
 
@@ -283,74 +381,67 @@ class NvidiaProvider(OpenAICompatibleProvider):
     SUPPORTS_TOOLS = True
     SUPPORTS_IMAGES = False
     VISION_MODELS = {
+        "meta/llama-3.2-90b-vision-instruct",
+        "meta/llama-3.2-11b-vision-instruct",
         "microsoft/phi-4-multimodal-instruct",
-        "microsoft/phi-3-vision-128k-instruct",
-        "nvidia/neva-22b",
     }
     MAX_TOKENS = 16384
     CONTEXT_WINDOW = 128_000
     MAX_OUTPUT_TOKENS = 16_384
     REASONING_MODEL_MARKERS = ("reasoning", "r1")
 
+    # Models served on NVIDIA NIM without tool-calling enabled. Sending
+    # `tools=`/`tool_choice="auto"` to these returns 400 / 422. Match by
+    # substring so future variants (e.g. gemma-3-27b-it) are covered.
+    NO_TOOL_PATTERNS = (
+        "gemma",                  # google/gemma-3-*-it, codegemma, recurrentgemma
+        "qwen2.5-coder",          # explicitly errors "Tool use has not been enabled"
+        "phi-4-multimodal",       # vision-only
+    )
+
+    # NVIDIA gateway caps several gemma deployments at <= 4096. Stay under it.
+    MAX_TOKENS_BY_PATTERN = {
+        "gemma": 2048,
+        "codegemma": 2048,
+        "phi-4": 4096,
+    }
+
     DEFAULT_MODELS = {
-        "microsoft/phi-4-multimodal-instruct": "microsoft/phi-4-multimodal-instruct",
-        "microsoft/phi-3-vision-128k-instruct": "microsoft/phi-3-vision-128k-instruct",
-        "nvidia/neva-22b": "nvidia/neva-22b",
+        "meta/llama-3.3-70b-instruct": "meta/llama-3.3-70b-instruct",
+        "meta/llama-3.1-405b-instruct": "meta/llama-3.1-405b-instruct",
+        "meta/llama-3.2-90b-vision-instruct": "meta/llama-3.2-90b-vision-instruct",
+        "nvidia/llama-3.1-nemotron-70b-instruct": "nvidia/llama-3.1-nemotron-70b-instruct",
+        "nvidia/llama-3.3-nemotron-super-49b-v1": "nvidia/llama-3.3-nemotron-super-49b-v1",
+        "nvidia/llama-3.1-nemotron-ultra-253b-v1": "nvidia/llama-3.1-nemotron-ultra-253b-v1",
+        "qwen/qwen2.5-coder-32b-instruct": "qwen/qwen2.5-coder-32b-instruct",
         "qwen/qwen3-coder-480b-a35b-instruct": "qwen/qwen3-coder-480b-a35b-instruct",
-        "moonshotai/kimi-k2-instruct-0905": "moonshotai/kimi-k2-instruct-0905",
-        "nvidia/nemotron-3-super-120b-a12b": "nvidia/nemotron-3-super-120b-a12b",
-        "nvidia/nemotron-3-nano-30b-a3b": "nvidia/nemotron-3-nano-30b-a3b",
-        "deepseek-ai/deepseek-v3.1": "deepseek-ai/deepseek-v3.1",
         "deepseek-ai/deepseek-r1": "deepseek-ai/deepseek-r1",
-        "moonshotai/kimi-k2.5": "moonshotai/kimi-k2.5",
+        "mistralai/mixtral-8x22b-instruct-v0.1": "mistralai/mixtral-8x22b-instruct-v0.1",
+        "microsoft/phi-4-multimodal-instruct": "microsoft/phi-4-multimodal-instruct",
     }
 
     def __init__(self, api_key: str, model: str | None = None, base_url: str | None = None):
-        super().__init__(api_key, model or "qwen/qwen3-coder-480b-a35b-instruct", base_url)
-
-    def stream_response(
-        self,
-        messages: list[Message],
-        tools: list[dict],
-        system: str,
-    ) -> Iterator[str | ToolCall]:
-        # For NIM, reinforce tool usage and handle potential tag-based calling
-        if tools:
-            system += "\n\nIMPORTANT: You have tools available. If you need to inspect files or the environment, use them immediately. Do not explain why you can't."
-        
-        # If we have tools and we're in a mode that demands them, try to force it
-        # Note: We use super().stream_response which handles the actual call
-        return super().stream_response(messages, tools, system)
-
-    def _format_messages(self, messages: list[Message], system: str) -> list[dict]:
-        # NVIDIA NIM models often handle 'system' role poorly.
-        # We merge it into the first user message or latest user message.
-        formatted = _format_messages(messages, "") # Get messages without system prompt
-        
-        # Filter out the empty system message that helper always adds at index 0
-        formatted = [m for m in formatted if not (m["role"] == "system" and not m["content"])]
-        
-        if not system:
-            return formatted
-
-        # Merge system prompt into the FIRST user message for maximum context influence
-        for msg in formatted:
-            if msg["role"] == "user":
-                if isinstance(msg["content"], str):
-                    msg["content"] = f"SYSTEM INSTRUCTIONS:\n{system}\n\nUSER MESSAGE:\n{msg['content']}"
-                elif isinstance(msg["content"], list):
-                    msg["content"].insert(0, {"type": "text", "text": f"SYSTEM INSTRUCTIONS:\n{system}"})
-                break
-        else:
-            # If no user message found, add one with just the instructions
-            formatted.insert(0, {"role": "user", "content": f"SYSTEM INSTRUCTIONS:\n{system}"})
-            
-        return formatted
+        super().__init__(api_key, model or "meta/llama-3.3-70b-instruct", base_url)
 
     def _clean_content_delta(self, content: str) -> str:
-        # Keep provider-emitted tool JSON visible to Agent._parse_manual_tool_calls.
-        # Some NIM/Nemotron responses put callable JSON behind text tags instead of
-        # returning OpenAI-compatible `tool_calls`; suppressing it makes execution impossible.
+        # Strip <think>...</think> reasoning blocks emitted by Nemotron/DeepSeek-R1.
+        # Keep tool JSON visible for Agent._parse_manual_tool_calls fallback.
+        if not content:
+            return content
+        if self._suppress_content:
+            if "</think>" in content:
+                self._suppress_content = False
+                content = content.split("</think>", 1)[1]
+            else:
+                return ""
+        if "<think>" in content:
+            before, _, rest = content.partition("<think>")
+            if "</think>" in rest:
+                _, _, after = rest.partition("</think>")
+                content = before + after
+            else:
+                self._suppress_content = True
+                content = before
         return content
 
 

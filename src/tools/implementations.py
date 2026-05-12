@@ -6,6 +6,7 @@ import platform
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
@@ -130,17 +131,16 @@ def scaffold_macos_app(
 
 
 def execute_sandbox_python(code: str) -> str:
-    """Executes Python code safely inside a disconnected, temporary Docker container."""
-    # Ensure docker is available
-    if not shutil.which("docker"):
-        return "Error: Docker is not installed or not in PATH. Sandbox execution requires Docker."
-
+    """Execute Python code in Docker when available, otherwise in a local temp process."""
     with tempfile.TemporaryDirectory() as temp_dir:
         temp_file_path = os.path.join(temp_dir, "agent_script.py")
         
         with open(temp_file_path, 'w', encoding='utf-8') as f:
             f.write(code)
-            
+
+        if not shutil.which("docker"):
+            return _execute_local_temp_python(temp_file_path, temp_dir)
+
         try:
             docker_command = [
                 "docker", "run", 
@@ -173,6 +173,30 @@ def execute_sandbox_python(code: str) -> str:
             return "Error: Code execution took too long and was terminated by the sandbox."
         except Exception as e:
             return f"Sandbox system error: {str(e)}"
+
+
+def _execute_local_temp_python(script_path: str, temp_dir: str) -> str:
+    """Fallback for hosts without Docker. Isolated by temp cwd, but not a security sandbox."""
+    try:
+        result = subprocess.run(
+            [sys.executable or "python3", script_path],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            cwd=temp_dir,
+            stdin=subprocess.DEVNULL,
+        )
+    except subprocess.TimeoutExpired:
+        return "Error: Code execution took too long and was terminated by the local fallback runner."
+    except Exception as e:
+        return f"Local Python execution error: {e}"
+
+    output = result.stdout.strip()
+    errors = result.stderr.strip()
+    notice = "Docker not found; ran with local Python in a temporary directory instead."
+    if result.returncode == 0:
+        return f"Execution successful (Local fallback). {notice}\nOutput:\n{output}"
+    return f"Execution failed (Local fallback). {notice}\nError:\n{errors}"
 
 
 def edit_file(path: str, old_string: str, new_string: str) -> str:
@@ -687,8 +711,13 @@ function appRoot() {{
   return path.resolve(__dirname, "..");
 }}
 
-function renderTemplate(value, port) {{
-  return String(value || "").replace(/\\{{port\\}}/g, String(port));
+function renderTemplate(value, port, root = appRoot()) {{
+  const python = process.env.CLOD_PYTHON || "python3";
+  return String(value || "")
+    .replace(/\\{{port\\}}/g, String(port))
+    .replace(/\\{{project_dir\\}}/g, root)
+    .replace(/\\{{project_root\\}}/g, root)
+    .replace(/\\{{python\\}}/g, python);
 }}
 
 function isPortOpen(port) {{
@@ -742,9 +771,9 @@ async function startBackend() {{
 
   const port = await findPort(DEFAULT_PORT);
   const root = appRoot();
-  const command = renderTemplate(BACKEND_COMMAND, port);
-  const startUrl = renderTemplate(START_URL_TEMPLATE, port);
-  const healthUrl = renderTemplate(HEALTH_URL_TEMPLATE, port);
+  const command = renderTemplate(BACKEND_COMMAND, port, root);
+  const startUrl = renderTemplate(START_URL_TEMPLATE, port, root);
+  const healthUrl = renderTemplate(HEALTH_URL_TEMPLATE, port, root);
   const env = {{ ...process.env, PORT: String(port), PYTHONUNBUFFERED: "1" }};
 
   backendProcess = spawn(command, {{

@@ -6,7 +6,7 @@ const path = require("path");
 
 const PRODUCT_NAME = "Clod";
 const DEFAULT_PORT = Number(process.env.MACOS_APP_PORT || 8765);
-const BACKEND_COMMAND = "python3 {project_dir}/api.py";
+const BACKEND_COMMAND = "{python} -m uvicorn api:app --host 127.0.0.1 --port {port}";
 const START_URL_TEMPLATE = "http://localhost:{port}";
 const HEALTH_URL_TEMPLATE = "http://localhost:{port}/health";
 
@@ -18,8 +18,13 @@ function appRoot() {
   return path.resolve(__dirname, "..");
 }
 
-function renderTemplate(value, port) {
-  return String(value || "").replace(/\{port\}/g, String(port));
+function renderTemplate(value, port, root = appRoot()) {
+  const python = process.env.CLOD_PYTHON || "python3";
+  return String(value || "")
+    .replace(/\{port\}/g, String(port))
+    .replace(/\{project_dir\}/g, root)
+    .replace(/\{project_root\}/g, root)
+    .replace(/\{python\}/g, python);
 }
 
 function isPortOpen(port) {
@@ -73,9 +78,9 @@ async function startBackend() {
 
   const port = await findPort(DEFAULT_PORT);
   const root = appRoot();
-  const command = renderTemplate(BACKEND_COMMAND, port);
-  const startUrl = renderTemplate(START_URL_TEMPLATE, port);
-  const healthUrl = renderTemplate(HEALTH_URL_TEMPLATE, port);
+  const command = renderTemplate(BACKEND_COMMAND, port, root);
+  const startUrl = renderTemplate(START_URL_TEMPLATE, port, root);
+  const healthUrl = renderTemplate(HEALTH_URL_TEMPLATE, port, root);
   const env = { ...process.env, PORT: String(port), PYTHONUNBUFFERED: "1" };
 
   backendProcess = spawn(command, {

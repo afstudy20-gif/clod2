@@ -250,7 +250,7 @@ def get_default_registry() -> ToolRegistry:
     reg.register(
         {
             "name": "execute_sandbox_python",
-            "description": "Execute python code safely in a disconnected Docker sandbox and return stdout/stderr. Use for testing/evaluating Python code.",
+            "description": "Execute Python code and return stdout/stderr. Uses a disconnected Docker sandbox when available, otherwise local Python in a temporary directory.",
             "parameters": {
                 "type": "object",
                 "properties": {

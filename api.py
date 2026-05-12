@@ -8,7 +8,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from src.core.config import get_api_key, load_config
 from src.core.session import list_sessions, load_session, save_session, delete_session
@@ -35,6 +35,7 @@ if _static.exists():
 class ChatMessage(BaseModel):
     role: str  # "user" | "assistant"
     content: str | list[dict]
+    toolEvents: list[dict] = Field(default_factory=list)
 
 
 class ChatRequest(BaseModel):
@@ -47,6 +48,8 @@ class ChatRequest(BaseModel):
     github_branch: str = "main"
     workspace: str | None = None     # local project directory for file tools
     session_id: str | None = None    # optional session ID for persistence
+    soul: str | None = None          # persona preset: default | karpathy | concise | proactive | debugger
+    autonomy: str | None = None      # auto-safe | confirm | full-auto
 
 
 class WorkspaceRequest(BaseModel):
@@ -98,7 +101,7 @@ def chat(req: ChatRequest):
         raise HTTPException(status_code=400, detail=str(e))
 
     from src.core.agent import Agent
-    from src.providers.base import Message as InternalMessage, ToolEvent
+    from src.providers.base import Message as InternalMessage, ToolCall, ToolEvent
     from src.tools.registry import get_default_registry
     from src.tools.implementations import set_project_root
 
@@ -127,7 +130,14 @@ def chat(req: ChatRequest):
         ]
 
         registry = get_default_registry()
-        agent = Agent(provider, registry, project_root=str(workspace))
+        agent = Agent(
+            provider,
+            registry,
+            project_root=str(workspace),
+            soul=req.soul,
+            autonomy=req.autonomy,
+        )
+        agent.prior_tool_calls = _extract_prior_tool_calls(req.messages, ToolCall)
         agent.history = internal_messages[:-1]  # All but last (chat() appends it)
 
         last_msg = _prepare_message_content(req.messages[-1].content, supports_images) if req.messages else ""
@@ -205,12 +215,7 @@ def _normalize_requested_model(provider: str, model: str | None) -> str | None:
     if provider.lower() not in {"nvidia", "nim"} or not model:
         return model
 
-    stale_nvidia_models = {
-        "nvidia/llama-3.1-nemotron-ultra-253b-v1",
-        "nvidia/llama-3.3-nemotron-super-49b-v1",
-        "meta/llama-3.1-405b-instruct",
-        "meta/llama-3.3-70b-instruct",
-    }
+    stale_nvidia_models: set[str] = set()
     if model in stale_nvidia_models:
         return None
     return model
@@ -244,12 +249,39 @@ def _model_supports_images(provider, model: str | None) -> bool:
     return getattr(provider, "SUPPORTS_IMAGES", False)
 
 
+def _extract_prior_tool_calls(messages: list[ChatMessage], tool_call_cls) -> list:
+    """Recover browser-stored toolEvents so the agent can avoid repeating visible actions."""
+    prior = []
+    for msg in messages[:-1]:
+        for index, event in enumerate(msg.toolEvents or []):
+            if not isinstance(event, dict) or event.get("type") != "start":
+                continue
+            name = event.get("name")
+            arguments = event.get("arguments") or {}
+            if not isinstance(name, str) or not isinstance(arguments, dict):
+                continue
+            prior.append(
+                tool_call_cls(
+                    id=f"prior-{len(prior)}-{index}",
+                    name=name,
+                    arguments=arguments,
+                )
+            )
+    return prior
+
+
 class PushRequest(BaseModel):
     workspace: str | None = None
     remote: str = "origin"
     branch: str | None = None
     force: bool = False
     commit_message: str = "Update from Clod assistant"
+    commit_body: str | None = None
+    allow_secrets: bool = False
+    skip_hooks: bool = False
+    github_token: str | None = None
+    user_name: str | None = None
+    user_email: str | None = None
 
 
 class TerminalRunRequest(BaseModel):
@@ -258,20 +290,67 @@ class TerminalRunRequest(BaseModel):
     timeout: int = 120
 
 
+_SECRET_PATTERNS = (
+    ".env", ".env.local", ".env.production",
+    "id_rsa", "id_ed25519", "id_dsa", "id_ecdsa",
+    ".pem", ".key", ".pfx", ".p12",
+    "credentials.json", "service-account.json",
+    ".aws/credentials", ".npmrc", ".pypirc",
+)
+
+
+def _scan_staged_for_secrets(run_cmd) -> list[str]:
+    proc = run_cmd(["git", "diff", "--cached", "--name-only"])
+    if proc.returncode != 0:
+        return []
+    flagged: list[str] = []
+    for line in proc.stdout.splitlines():
+        path = line.strip()
+        if not path:
+            continue
+        lowered = path.lower()
+        if any(lowered.endswith(p) or lowered == p or f"/{p}" in f"/{lowered}" for p in _SECRET_PATTERNS):
+            flagged.append(path)
+    return flagged
+
+
+def _inject_token_into_url(url: str, token: str) -> str:
+    """Insert GitHub token into HTTPS URL for one-shot push (env-only, never persisted)."""
+    if not url.lower().startswith(("http://", "https://")):
+        return url
+    scheme, _, rest = url.partition("://")
+    if "@" in rest.split("/", 1)[0]:
+        return url  # already has creds
+    return f"{scheme}://x-access-token:{token}@{rest}"
+
+
 @app.post("/git/push")
 def push_to_github(req: PushRequest):
     """Stage, commit, and push changes to GitHub."""
     import subprocess
+    import os
     from pathlib import Path
-    
+
     ws_path = Path(req.workspace).expanduser().resolve() if req.workspace else Path(__file__).parent.resolve()
     if not ws_path.exists() or not ws_path.is_dir():
         raise HTTPException(status_code=400, detail="Invalid workspace path")
 
     repo_path = _resolve_git_worktree(ws_path)
 
-    def run_cmd(args, cwd: Path | None = None):
-        return subprocess.run(args, cwd=str(cwd or repo_path), capture_output=True, text=True, timeout=60)
+    base_env = os.environ.copy()
+    # Prevent password prompts from blocking
+    base_env.setdefault("GIT_TERMINAL_PROMPT", "0")
+    base_env.setdefault("GIT_ASKPASS", "echo")
+
+    def run_cmd(args, cwd: Path | None = None, timeout: int = 60, env: dict | None = None):
+        return subprocess.run(
+            args,
+            cwd=str(cwd or repo_path),
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            env=env or base_env,
+        )
 
     def combined_output(proc):
         return ((proc.stdout or "") + (proc.stderr or "")).strip()
@@ -284,19 +363,20 @@ def push_to_github(req: PushRequest):
         remote_name = "origin"
         remote_is_url = _looks_like_git_remote_url(remote_input)
 
-        # Check if it's a git repo
-        if not (repo_path / ".git").exists():
+        # Detect repo via rev-parse (handles worktrees, submodules, .git files)
+        is_repo_proc = run_cmd(["git", "rev-parse", "--is-inside-work-tree"])
+        is_repo = is_repo_proc.returncode == 0 and is_repo_proc.stdout.strip() == "true"
+
+        if not is_repo:
             init_proc = run_cmd(["git", "init"], cwd=repo_path)
             if init_proc.returncode != 0:
                 return {"ok": False, "output": combined_output(init_proc)}
-            # If no remote is provided, we can't push, but we can at least init.
             if not remote_is_url:
                 return {
                     "ok": False,
                     "output": (
                         "Not a git repository and no remote URL provided.\n"
-                        f"Workspace: {ws_path}\n"
-                        f"Repo root: {repo_path}"
+                        f"Workspace: {ws_path}\nRepo root: {repo_path}"
                     ),
                 }
             remote_proc = run_cmd(["git", "remote", "add", remote_name, remote_input])
@@ -312,9 +392,41 @@ def push_to_github(req: PushRequest):
                 return {"ok": False, "output": combined_output(remote_proc)}
         else:
             remote_name = remote_input
+            verify = run_cmd(["git", "remote", "get-url", remote_name])
+            if verify.returncode != 0:
+                return {
+                    "ok": False,
+                    "output": f"Remote '{remote_name}' not configured. Provide a URL or run: git remote add {remote_name} <url>",
+                }
 
+        # Detect detached HEAD
         branch_probe = run_cmd(["git", "branch", "--show-current"])
-        current_branch = branch_probe.stdout.strip() or "main"
+        current_branch = branch_probe.stdout.strip()
+        if not current_branch:
+            head_proc = run_cmd(["git", "rev-parse", "--verify", "HEAD"])
+            if head_proc.returncode == 0:
+                # Detached HEAD with commits: require explicit branch
+                if not (req.branch or "").strip():
+                    return {
+                        "ok": False,
+                        "output": "Detached HEAD detected. Specify a branch name to push.",
+                    }
+                current_branch = req.branch.strip()
+            else:
+                # Empty repo: use requested branch or 'main'
+                current_branch = (req.branch or "").strip() or "main"
+                run_cmd(["git", "checkout", "-B", current_branch])
+
+        # Ensure user.name/email configured
+        name_proc = run_cmd(["git", "config", "user.name"])
+        email_proc = run_cmd(["git", "config", "user.email"])
+        if name_proc.returncode != 0 or not name_proc.stdout.strip():
+            name = req.user_name or os.environ.get("GIT_AUTHOR_NAME") or "Clod Assistant"
+            run_cmd(["git", "config", "user.name", name])
+        if email_proc.returncode != 0 or not email_proc.stdout.strip():
+            email = req.user_email or os.environ.get("GIT_AUTHOR_EMAIL") or "clod@local"
+            run_cmd(["git", "config", "user.email", email])
+
         before_status = run_cmd(["git", "status", "--short"])
         diagnostics = [
             f"Workspace: {ws_path}",
@@ -324,41 +436,89 @@ def push_to_github(req: PushRequest):
             "Status before staging:",
             before_status.stdout.strip() or "(clean)",
         ]
-        
-        # Add all
+
         add_proc = run_cmd(["git", "add", "."])
         if add_proc.returncode != 0:
             return {"ok": False, "output": combined_output(add_proc)}
-        
-        # Commit (only if there are changes)
+
+        # Secret scan on staged files
+        if not req.allow_secrets:
+            flagged = _scan_staged_for_secrets(run_cmd)
+            if flagged:
+                run_cmd(["git", "reset", "HEAD", "--"] + flagged)
+                diagnostics.append(
+                    "Unstaged suspicious files (set allow_secrets=true to override): "
+                    + ", ".join(flagged)
+                )
+
         check = run_cmd(["git", "status", "--porcelain"])
         notes = diagnostics + [""]
+        commit_sha = None
         if not check.stdout.strip():
             notes.append(
-                "No changes to commit in the repo root above. "
+                "No changes to commit. "
                 "If you edited files externally, make sure the Workspace field points at that repository."
             )
         else:
-            commit_proc = run_cmd(["git", "commit", "-m", req.commit_message])
+            msg = req.commit_message
+            if req.commit_body:
+                msg = f"{msg}\n\n{req.commit_body}"
+            commit_args = ["git", "commit", "-m", msg]
+            if req.skip_hooks:
+                commit_args.append("--no-verify")
+            commit_proc = run_cmd(commit_args)
             if commit_proc.returncode != 0:
                 return {"ok": False, "output": combined_output(commit_proc)}
             notes.append(combined_output(commit_proc))
-            
-        # Push
+            sha_proc = run_cmd(["git", "rev-parse", "HEAD"])
+            if sha_proc.returncode == 0:
+                commit_sha = sha_proc.stdout.strip()
+
         branch = (req.branch or "").strip() or current_branch
+
+        # Pre-push fetch to detect non-fast-forward
+        fetch_env = dict(base_env)
+        if req.github_token:
+            url_proc = run_cmd(["git", "remote", "get-url", remote_name])
+            if url_proc.returncode == 0:
+                authed = _inject_token_into_url(url_proc.stdout.strip(), req.github_token)
+                fetch_env["GIT_CONFIG_COUNT"] = "1"
+                fetch_env["GIT_CONFIG_KEY_0"] = f"url.{authed}.insteadOf"
+                fetch_env["GIT_CONFIG_VALUE_0"] = url_proc.stdout.strip()
+
+        run_cmd(["git", "fetch", remote_name, branch], timeout=120, env=fetch_env)
 
         push_args = ["git", "push", "-u", remote_name, branch]
         if req.force:
             push_args.append("--force-with-lease")
-        proc = run_cmd(push_args)
+        if req.skip_hooks:
+            push_args.append("--no-verify")
+
+        proc = run_cmd(push_args, timeout=300, env=fetch_env)
+        out = combined_output(proc)
         if proc.returncode == 0:
             if remote_is_url:
                 _save_cached_remote(repo_path, remote_input)
-            output = "\n".join([note for note in notes if note] + [combined_output(proc) or f"Successfully pushed to GitHub ({branch})"])
-            return {"ok": True, "output": output}
-        else:
-            return {"ok": False, "output": combined_output(proc) or "Push failed"}
+            output = "\n".join([n for n in notes if n] + [out or f"Successfully pushed to {branch}"])
+            return {"ok": True, "output": output, "commit_sha": commit_sha, "branch": branch}
 
+        # Diagnose common failures
+        lower = out.lower()
+        if "non-fast-forward" in lower or "rejected" in lower and "fetch first" in lower:
+            hint = "\n\nHint: Remote has commits you don't. Run a pull/rebase first, or set force=true (uses --force-with-lease)."
+        elif "authentication failed" in lower or "could not read" in lower or "permission denied" in lower:
+            hint = "\n\nHint: Auth failed. Pass github_token, configure a credential helper, or use SSH."
+        elif "src refspec" in lower and "does not match" in lower:
+            hint = "\n\nHint: Branch has no commits yet. Make at least one commit before pushing."
+        elif "terminal prompts disabled" in lower:
+            hint = "\n\nHint: Git asked for credentials but prompting is disabled. Pass github_token or configure a credential helper."
+        else:
+            hint = ""
+
+        return {"ok": False, "output": (out or "Push failed") + hint}
+
+    except subprocess.TimeoutExpired as e:
+        return {"ok": False, "output": f"Git operation timed out: {e.cmd}"}
     except Exception as e:
         return {"ok": False, "output": str(e)}
 
@@ -746,6 +906,65 @@ def update_models(req: ModelUpdateRequest):
     }
 
 
+@app.get("/souls")
+def get_souls():
+    """Return available soul presets (persona + autonomy defaults)."""
+    from src.core.souls import list_souls
+    return {"souls": list_souls()}
+
+
+# ── Clarify endpoints ────────────────────────────────────────────────────────
+
+
+class ClarifyResolveRequest(BaseModel):
+    session_id: str
+    response: str
+
+
+@app.get("/clarify/{session_id}")
+def clarify_status(session_id: str):
+    from src.core import clarify as clarify_mod
+    return {"pending": clarify_mod.peek(session_id)}
+
+
+@app.post("/clarify/respond")
+def clarify_respond(req: ClarifyResolveRequest):
+    from src.core import clarify as clarify_mod
+    n = clarify_mod.resolve(req.session_id, req.response)
+    return {"resolved": n}
+
+
+# ── Checkpoint endpoints ─────────────────────────────────────────────────────
+
+
+class CheckpointCreateRequest(BaseModel):
+    workspace: str | None = None
+    label: str = ""
+
+
+class CheckpointRestoreRequest(BaseModel):
+    workspace: str | None = None
+    checkpoint_id: str
+
+
+@app.get("/checkpoints")
+def checkpoints_list(workspace: str | None = None):
+    from src.core import checkpoint as ckpt
+    return {"checkpoints": ckpt.list_checkpoints(workspace)}
+
+
+@app.post("/checkpoints")
+def checkpoints_create(req: CheckpointCreateRequest):
+    from src.core import checkpoint as ckpt
+    return ckpt.create_checkpoint(req.workspace, label=req.label)
+
+
+@app.post("/checkpoints/restore")
+def checkpoints_restore(req: CheckpointRestoreRequest):
+    from src.core import checkpoint as ckpt
+    return ckpt.restore_checkpoint(req.workspace, req.checkpoint_id)
+
+
 @app.get("/providers")
 def list_providers():
     """Return available providers and their models (live if refreshed, else defaults)."""
@@ -785,3 +1004,536 @@ def remove_session(session_id: str):
     if delete_session(session_id):
         return {"deleted": True}
     raise HTTPException(status_code=404, detail="Session not found")
+
+
+# ── Coolify deployment analyzer ───────────────────────────────────────────────
+
+class CoolifyAnalyzeRequest(BaseModel):
+    workspace: str
+    write_files: bool = False
+    overwrite: bool = False
+
+
+def _read_text_safe(path: Path, limit: int = 200_000) -> str:
+    try:
+        return path.read_text(encoding="utf-8", errors="ignore")[:limit]
+    except Exception:
+        return ""
+
+
+def _read_json_safe(path: Path) -> dict:
+    try:
+        return json.loads(_read_text_safe(path))
+    except Exception:
+        return {}
+
+
+def _detect_stack(root: Path) -> dict:
+    """Detect framework, language, build/start commands, port, build pack."""
+    indicators: list[str] = []
+    info: dict = {
+        "framework": None,
+        "language": None,
+        "package_manager": None,
+        "build_pack": None,        # "dockerfile" | "nixpacks" | "static" | "compose"
+        "build_command": None,
+        "install_command": None,
+        "start_command": None,
+        "port": None,
+        "publish_dir": None,
+        "is_static": False,
+        "is_ssr": False,
+        "needs_database": False,
+        "env_required": [],
+        "persistent_paths": [],
+        "healthcheck_path": "/",
+        "indicators": indicators,
+        "warnings": [],
+    }
+
+    pkg = root / "package.json"
+    pyproject = root / "pyproject.toml"
+    reqs = root / "requirements.txt"
+    gomod = root / "go.mod"
+    cargo = root / "Cargo.toml"
+    gemfile = root / "Gemfile"
+    composer = root / "composer.json"
+    dockerfile = root / "Dockerfile"
+    compose = root / "docker-compose.yml"
+    compose_yaml = root / "docker-compose.yaml"
+    index_html = root / "index.html"
+
+    if dockerfile.exists():
+        info["build_pack"] = "dockerfile"
+        indicators.append("Dockerfile")
+        df_text = _read_text_safe(dockerfile)
+        # Try to read EXPOSE
+        for line in df_text.splitlines():
+            stripped = line.strip()
+            if stripped.upper().startswith("EXPOSE "):
+                try:
+                    info["port"] = int(stripped.split()[1].split("/")[0])
+                except Exception:
+                    pass
+                break
+    if compose.exists() or compose_yaml.exists():
+        indicators.append("docker-compose")
+        if not info["build_pack"]:
+            info["build_pack"] = "compose"
+
+    # Node.js / JS frameworks
+    if pkg.exists():
+        data = _read_json_safe(pkg)
+        scripts = data.get("scripts", {}) or {}
+        deps = {**(data.get("dependencies") or {}), **(data.get("devDependencies") or {})}
+        info["language"] = "javascript"
+        indicators.append("package.json")
+
+        if (root / "pnpm-lock.yaml").exists():
+            info["package_manager"] = "pnpm"
+        elif (root / "yarn.lock").exists():
+            info["package_manager"] = "yarn"
+        elif (root / "bun.lockb").exists() or (root / "bun.lock").exists():
+            info["package_manager"] = "bun"
+        else:
+            info["package_manager"] = "npm"
+        pm = info["package_manager"]
+        info["install_command"] = {"npm": "npm ci", "pnpm": "pnpm install --frozen-lockfile",
+                                    "yarn": "yarn install --frozen-lockfile", "bun": "bun install"}[pm]
+        info["build_command"] = f"{pm} run build" if "build" in scripts else None
+        info["start_command"] = f"{pm} start" if "start" in scripts else None
+
+        if "next" in deps:
+            info["framework"] = "Next.js"
+            info["port"] = info["port"] or 3000
+            next_cfg = next((p for p in [root / "next.config.js", root / "next.config.mjs",
+                                          root / "next.config.ts"] if p.exists()), None)
+            cfg_text = _read_text_safe(next_cfg) if next_cfg else ""
+            if "output:" in cfg_text and "'export'" in cfg_text or '"export"' in cfg_text:
+                info["is_static"] = True
+                info["publish_dir"] = "out"
+                info["build_pack"] = info["build_pack"] or "static"
+            else:
+                info["is_ssr"] = True
+                info["build_pack"] = info["build_pack"] or "nixpacks"
+        elif "nuxt" in deps or "nuxt3" in deps:
+            info["framework"] = "Nuxt"
+            info["port"] = info["port"] or 3000
+            info["is_ssr"] = True
+            info["start_command"] = "node .output/server/index.mjs"
+            info["build_pack"] = info["build_pack"] or "nixpacks"
+        elif "@remix-run/serve" in deps or "@remix-run/node" in deps:
+            info["framework"] = "Remix"
+            info["port"] = info["port"] or 3000
+            info["is_ssr"] = True
+            info["build_pack"] = info["build_pack"] or "nixpacks"
+        elif "@sveltejs/kit" in deps:
+            info["framework"] = "SvelteKit"
+            info["port"] = info["port"] or 3000
+            if "@sveltejs/adapter-static" in deps:
+                info["is_static"] = True
+                info["publish_dir"] = "build"
+                info["build_pack"] = info["build_pack"] or "static"
+            else:
+                info["is_ssr"] = True
+                info["build_pack"] = info["build_pack"] or "nixpacks"
+                info["start_command"] = "node build"
+        elif "astro" in deps:
+            info["framework"] = "Astro"
+            info["port"] = info["port"] or 4321
+            adapters = [d for d in deps if d.startswith("@astrojs/") and d != "@astrojs/check"]
+            if any(a in deps for a in ("@astrojs/node", "@astrojs/vercel", "@astrojs/cloudflare")):
+                info["is_ssr"] = True
+                info["build_pack"] = info["build_pack"] or "nixpacks"
+            else:
+                info["is_static"] = True
+                info["publish_dir"] = "dist"
+                info["build_pack"] = info["build_pack"] or "static"
+        elif "gatsby" in deps:
+            info["framework"] = "Gatsby"
+            info["is_static"] = True
+            info["publish_dir"] = "public"
+            info["build_pack"] = info["build_pack"] or "static"
+        elif "@angular/core" in deps:
+            info["framework"] = "Angular"
+            info["is_static"] = True
+            info["publish_dir"] = "dist"
+            info["build_pack"] = info["build_pack"] or "static"
+        elif "vite" in deps and ("react" in deps or "vue" in deps or "svelte" in deps or "solid-js" in deps):
+            info["framework"] = "Vite SPA"
+            info["is_static"] = True
+            info["publish_dir"] = "dist"
+            info["build_pack"] = info["build_pack"] or "static"
+        elif "express" in deps or "fastify" in deps or "hono" in deps or "koa" in deps:
+            info["framework"] = "Node API"
+            info["port"] = info["port"] or 3000
+            info["is_ssr"] = True
+            info["build_pack"] = info["build_pack"] or "nixpacks"
+        elif "react-scripts" in deps:
+            info["framework"] = "Create React App"
+            info["is_static"] = True
+            info["publish_dir"] = "build"
+            info["build_pack"] = info["build_pack"] or "static"
+
+        # Refine start command from scripts
+        for key in ("start", "serve", "preview"):
+            if key in scripts and not info["is_static"]:
+                info["start_command"] = f"{pm} run {key}"
+                break
+
+    # Python
+    elif pyproject.exists() or reqs.exists() or (root / "manage.py").exists():
+        info["language"] = "python"
+        text = ""
+        if pyproject.exists():
+            indicators.append("pyproject.toml")
+            text += _read_text_safe(pyproject).lower()
+        if reqs.exists():
+            indicators.append("requirements.txt")
+            text += _read_text_safe(reqs).lower()
+        if (root / "manage.py").exists():
+            indicators.append("manage.py")
+            info["framework"] = "Django"
+            info["port"] = 8000
+            info["start_command"] = "gunicorn --bind 0.0.0.0:8000 $(ls */wsgi.py | head -1 | sed 's|/wsgi.py||').wsgi"
+            info["install_command"] = "pip install -r requirements.txt gunicorn"
+            info["healthcheck_path"] = "/"
+            info["env_required"].extend(["SECRET_KEY", "DEBUG", "ALLOWED_HOSTS", "DATABASE_URL"])
+        elif "fastapi" in text:
+            info["framework"] = "FastAPI"
+            info["port"] = 8000
+            info["start_command"] = "uvicorn main:app --host 0.0.0.0 --port 8000"
+            info["install_command"] = "pip install -r requirements.txt"
+            info["healthcheck_path"] = "/docs"
+        elif "flask" in text:
+            info["framework"] = "Flask"
+            info["port"] = 5000
+            info["start_command"] = "gunicorn --bind 0.0.0.0:5000 app:app"
+            info["install_command"] = "pip install -r requirements.txt gunicorn"
+        elif "streamlit" in text:
+            info["framework"] = "Streamlit"
+            info["port"] = 8501
+            info["start_command"] = "streamlit run app.py --server.port 8501 --server.address 0.0.0.0"
+        else:
+            info["framework"] = "Python"
+            info["port"] = 8000
+            info["install_command"] = "pip install -r requirements.txt" if reqs.exists() else "pip install ."
+        info["build_pack"] = info["build_pack"] or "nixpacks"
+
+    # Go
+    elif gomod.exists():
+        info["language"] = "go"
+        info["framework"] = "Go"
+        info["port"] = 8080
+        info["build_command"] = "go build -o app ."
+        info["start_command"] = "./app"
+        info["build_pack"] = info["build_pack"] or "nixpacks"
+        indicators.append("go.mod")
+
+    # Rust
+    elif cargo.exists():
+        info["language"] = "rust"
+        info["framework"] = "Rust"
+        info["port"] = 8080
+        info["build_command"] = "cargo build --release"
+        info["start_command"] = "./target/release/$(grep '^name' Cargo.toml | head -1 | cut -d'\"' -f2)"
+        info["build_pack"] = info["build_pack"] or "nixpacks"
+        indicators.append("Cargo.toml")
+
+    # Ruby
+    elif gemfile.exists():
+        info["language"] = "ruby"
+        text = _read_text_safe(gemfile).lower()
+        if "rails" in text:
+            info["framework"] = "Rails"
+            info["port"] = 3000
+            info["start_command"] = "bundle exec rails server -b 0.0.0.0 -p 3000"
+            info["env_required"].extend(["RAILS_ENV", "SECRET_KEY_BASE", "DATABASE_URL"])
+        else:
+            info["framework"] = "Ruby"
+            info["port"] = 3000
+        info["install_command"] = "bundle install"
+        info["build_pack"] = info["build_pack"] or "nixpacks"
+        indicators.append("Gemfile")
+
+    # PHP
+    elif composer.exists():
+        info["language"] = "php"
+        data = _read_json_safe(composer)
+        deps = {**(data.get("require") or {}), **(data.get("require-dev") or {})}
+        if "laravel/framework" in deps:
+            info["framework"] = "Laravel"
+            info["port"] = 8000
+            info["start_command"] = "php artisan serve --host=0.0.0.0 --port=8000"
+            info["env_required"].extend(["APP_KEY", "APP_ENV", "DATABASE_URL"])
+            info["persistent_paths"].append("storage")
+        else:
+            info["framework"] = "PHP"
+            info["port"] = 8000
+        info["build_pack"] = info["build_pack"] or "nixpacks"
+        indicators.append("composer.json")
+
+    # Pure static site
+    elif index_html.exists():
+        info["language"] = "html"
+        info["framework"] = "Static HTML"
+        info["is_static"] = True
+        info["publish_dir"] = "."
+        info["build_pack"] = "static"
+        indicators.append("index.html")
+
+    # Database / cache hints
+    blob = ""
+    for f in (pkg, pyproject, reqs, gemfile, composer, gomod, cargo):
+        if f.exists():
+            blob += _read_text_safe(f).lower()
+    if "postgres" in blob or "psycopg" in blob or "pg" in blob.split():
+        info["needs_database"] = True
+        info["env_required"].append("DATABASE_URL")
+    if "redis" in blob:
+        info["env_required"].append("REDIS_URL")
+    if "mysql" in blob or "mariadb" in blob:
+        info["needs_database"] = True
+        info["env_required"].append("DATABASE_URL")
+
+    # Persistent paths heuristic
+    for candidate in ("uploads", "storage", "data", "media", "public/uploads", "var"):
+        if (root / candidate).exists() and (root / candidate).is_dir():
+            if candidate not in info["persistent_paths"]:
+                info["persistent_paths"].append(candidate)
+    for sqlite in ("db.sqlite3", "database.sqlite", "sqlite.db"):
+        if (root / sqlite).exists():
+            info["persistent_paths"].append(sqlite)
+            info["needs_database"] = True
+
+    # .env.example → required env keys
+    env_example = root / ".env.example"
+    if env_example.exists():
+        for line in _read_text_safe(env_example).splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key = line.split("=", 1)[0].strip()
+            if key and key not in info["env_required"]:
+                info["env_required"].append(key)
+
+    # Healthcheck refinement
+    if info["framework"] in ("FastAPI",):
+        info["healthcheck_path"] = "/docs"
+    elif info["is_static"]:
+        info["healthcheck_path"] = "/"
+
+    # Warnings
+    if info["framework"] is None:
+        info["warnings"].append("Could not detect a framework. Falling back to generic config.")
+        info["build_pack"] = info["build_pack"] or "nixpacks"
+    if info["is_ssr"] and not info["start_command"]:
+        info["warnings"].append("SSR detected but no start command found. Add a 'start' script.")
+    if info["build_pack"] == "dockerfile" and not info["port"]:
+        info["warnings"].append("Dockerfile present but no EXPOSE directive. Set port manually in Coolify.")
+
+    return info
+
+
+def _generate_dockerfile(info: dict) -> str:
+    fw = info.get("framework") or ""
+    lang = info.get("language") or ""
+    port = info.get("port") or 3000
+    install = info.get("install_command") or ""
+    build = info.get("build_command") or ""
+    start = info.get("start_command") or ""
+    pm = info.get("package_manager") or "npm"
+
+    if lang == "javascript":
+        node_image = "node:20-alpine"
+        return f"""# Auto-generated by Clod for Coolify
+FROM {node_image} AS deps
+WORKDIR /app
+COPY package*.json pnpm-lock.yaml* yarn.lock* bun.lock* ./
+RUN {install or f'{pm} install'}
+
+FROM {node_image} AS builder
+WORKDIR /app
+COPY --from=deps /app/node_modules ./node_modules
+COPY . .
+{f'RUN {build}' if build else '# no build step'}
+
+FROM {node_image} AS runner
+WORKDIR /app
+ENV NODE_ENV=production
+ENV PORT={port}
+COPY --from=builder /app ./
+EXPOSE {port}
+CMD {json.dumps((start or f'{pm} start').split())}
+"""
+    if lang == "python":
+        return f"""# Auto-generated by Clod for Coolify
+FROM python:3.11-slim
+WORKDIR /app
+ENV PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1
+COPY requirements.txt* pyproject.toml* ./
+RUN {install or 'pip install -r requirements.txt'}
+COPY . .
+EXPOSE {port}
+CMD {json.dumps((start or f'uvicorn main:app --host 0.0.0.0 --port {port}').split())}
+"""
+    if lang == "go":
+        return f"""# Auto-generated by Clod for Coolify
+FROM golang:1.22-alpine AS builder
+WORKDIR /src
+COPY go.* ./
+RUN go mod download
+COPY . .
+RUN CGO_ENABLED=0 go build -o /app .
+
+FROM alpine:3.20
+WORKDIR /app
+COPY --from=builder /app /app/app
+EXPOSE {port}
+CMD ["/app/app"]
+"""
+    if lang == "rust":
+        return f"""# Auto-generated by Clod for Coolify
+FROM rust:1.78 AS builder
+WORKDIR /src
+COPY . .
+RUN cargo build --release
+
+FROM debian:bookworm-slim
+WORKDIR /app
+COPY --from=builder /src/target/release/* /app/
+EXPOSE {port}
+CMD ["/app/app"]
+"""
+    if lang == "php":
+        return f"""# Auto-generated by Clod for Coolify
+FROM php:8.3-cli
+WORKDIR /app
+COPY . .
+RUN apt-get update && apt-get install -y unzip git \\
+ && curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer \\
+ && composer install --no-dev --optimize-autoloader
+EXPOSE {port}
+CMD {json.dumps((start or f'php -S 0.0.0.0:{port} -t public').split())}
+"""
+    if info.get("is_static"):
+        publish = info.get("publish_dir") or "."
+        return f"""# Auto-generated by Clod for Coolify (static)
+FROM nginx:alpine
+COPY {publish} /usr/share/nginx/html
+EXPOSE 80
+"""
+    return f"""# Auto-generated by Clod for Coolify (generic)
+FROM debian:bookworm-slim
+WORKDIR /app
+COPY . .
+EXPOSE {port}
+CMD ["sh", "-c", "echo 'Configure start command'"]
+"""
+
+
+def _generate_dockerignore(lang: str) -> str:
+    common = [".git", ".gitignore", ".env", ".env.*", "!.env.example",
+              "node_modules", "*.log", ".DS_Store", "coverage", ".vscode", ".idea"]
+    by_lang = {
+        "javascript": ["dist", "build", ".next", ".nuxt", ".turbo", ".cache"],
+        "python": ["__pycache__", "*.pyc", ".venv", "venv", ".pytest_cache", ".mypy_cache", ".ruff_cache"],
+        "go": ["bin", "*.test"],
+        "rust": ["target"],
+        "php": ["vendor"],
+        "ruby": ["vendor", "tmp"],
+    }
+    return "\n".join(common + by_lang.get(lang, [])) + "\n"
+
+
+def _generate_coolify_json(info: dict) -> dict:
+    return {
+        "name": "auto-detected",
+        "type": "application",
+        "build_pack": info.get("build_pack"),
+        "ports_exposes": str(info.get("port") or 3000),
+        "install_command": info.get("install_command"),
+        "build_command": info.get("build_command"),
+        "start_command": info.get("start_command"),
+        "publish_directory": info.get("publish_dir"),
+        "health_check_path": info.get("healthcheck_path") or "/",
+        "health_check_enabled": True,
+        "static_image": info.get("is_static"),
+        "environment_variables": [
+            {"key": k, "value": "", "is_required": True} for k in info.get("env_required") or []
+        ],
+        "persistent_storages": [
+            {"mount_path": f"/app/{p}", "host_path": None, "name": p.replace("/", "_")}
+            for p in info.get("persistent_paths") or []
+        ],
+    }
+
+
+def _build_recommendations(info: dict) -> list[str]:
+    recs: list[str] = []
+    if info.get("build_pack") == "dockerfile":
+        recs.append("Use 'Dockerfile' build pack — repo already contains one.")
+    elif info.get("build_pack") == "static":
+        recs.append(f"Use 'Static' build pack with publish dir '{info.get('publish_dir')}'.")
+    elif info.get("build_pack") == "compose":
+        recs.append("Use 'Docker Compose' build pack — docker-compose detected.")
+    else:
+        recs.append("Use 'Nixpacks' build pack — auto-detects runtime.")
+    if info.get("port"):
+        recs.append(f"Set Port: {info['port']}")
+    if info.get("healthcheck_path"):
+        recs.append(f"Healthcheck path: {info['healthcheck_path']}")
+    if info.get("env_required"):
+        recs.append("Required env vars: " + ", ".join(info["env_required"]))
+    if info.get("needs_database"):
+        recs.append("Provision a database service (Postgres/MySQL) in Coolify and set DATABASE_URL.")
+    if info.get("persistent_paths"):
+        recs.append("Add persistent volumes for: " + ", ".join(info["persistent_paths"]))
+    if info.get("is_ssr"):
+        recs.append("Enable HTTP/2 and websockets in Coolify if your framework streams.")
+    if info.get("warnings"):
+        recs.extend(f"⚠ {w}" for w in info["warnings"])
+    return recs
+
+
+@app.post("/deploy/coolify/analyze")
+def coolify_analyze(req: CoolifyAnalyzeRequest):
+    """Detect stack and produce Coolify deployment configuration."""
+    ws = Path(req.workspace).expanduser().resolve()
+    if not ws.exists() or not ws.is_dir():
+        raise HTTPException(status_code=400, detail="Invalid workspace path")
+
+    info = _detect_stack(ws)
+    coolify_cfg = _generate_coolify_json(info)
+    recommendations = _build_recommendations(info)
+
+    files = {
+        "Dockerfile": _generate_dockerfile(info),
+        ".dockerignore": _generate_dockerignore(info.get("language") or ""),
+        "coolify.json": json.dumps(coolify_cfg, indent=2),
+    }
+
+    written: list[str] = []
+    skipped: list[str] = []
+    if req.write_files:
+        for name, content in files.items():
+            target = ws / name
+            if target.exists() and not req.overwrite:
+                skipped.append(name)
+                continue
+            try:
+                target.write_text(content, encoding="utf-8")
+                written.append(name)
+            except Exception as e:
+                skipped.append(f"{name} ({e})")
+
+    return {
+        "ok": True,
+        "workspace": str(ws),
+        "detection": info,
+        "coolify_config": coolify_cfg,
+        "recommendations": recommendations,
+        "files": files,
+        "written": written,
+        "skipped": skipped,
+    }

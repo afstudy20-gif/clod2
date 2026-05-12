@@ -31,6 +31,10 @@
     --sans:       -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
     --radius:     6px;
     --sidebar-w: 280px;
+  --rail-w: 72px;
+  --inspector-w: 320px;
+  --status-green: #22c55e;
+  --pill-bg: rgba(34, 197, 94, 0.12);
   }
 
   html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(--text); font-family: var(--mono); font-size: 13px; }
@@ -448,6 +452,486 @@
   .tool-body.open { display: block; }
   .tool-result { color: var(--text2); font-size: 12px; white-space: pre-wrap; max-height: 300px; overflow-y: auto; line-height: 1.5; }
 
+  /* === v2 layout: icon rail + inspector === */
+  #icon-rail {
+    width: var(--rail-w);
+    min-width: var(--rail-w);
+    background: var(--bg);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 14px 0 10px;
+    gap: 4px;
+    overflow: hidden;
+  }
+  #icon-rail .rail-logo {
+    width: 36px; height: 36px;
+    border-radius: 10px;
+    background: linear-gradient(135deg, var(--accent), var(--accent2));
+    display: flex; align-items: center; justify-content: center;
+    color: #000; font-weight: 800; font-size: 15px;
+    margin-bottom: 14px;
+  }
+  .rail-btn {
+    width: 56px;
+    padding: 8px 4px;
+    border-radius: 10px;
+    background: transparent;
+    border: 1px solid transparent;
+    color: var(--text3);
+    font-family: var(--mono);
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    cursor: pointer;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    transition: all 0.15s;
+  }
+  .rail-btn .rail-glyph { font-size: 16px; line-height: 1; }
+  .rail-btn:hover { color: var(--text); background: var(--bg3); }
+  .rail-btn.active { color: var(--accent2); background: var(--bg3); border-color: var(--border2); }
+  #icon-rail .rail-spacer { flex: 1; }
+  .rail-theme-btn { color: var(--text3); cursor: pointer; padding: 6px; font-size: 14px; }
+  .rail-theme-btn:hover { color: var(--accent2); }
+
+  /* sidebar header upgrade */
+  #sidebar-header {
+    justify-content: space-between;
+  }
+  #sidebar-header .sidebar-title { font-size: 14px; font-weight: 700; color: var(--text); letter-spacing: -0.3px; }
+  #sidebar-header .sidebar-back {
+    background: transparent; border: 1px solid var(--border2);
+    color: var(--text2); border-radius: 6px;
+    width: 26px; height: 26px;
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer; font-size: 14px;
+  }
+  #sidebar-header .sidebar-back:hover { color: var(--accent2); border-color: var(--accent); }
+
+  /* search box */
+  #sidebar-search {
+    margin: 8px 12px 4px;
+    display: flex; align-items: center; gap: 6px;
+    padding: 6px 10px;
+    background: var(--bg4);
+    border: 1px solid var(--border2);
+    border-radius: 8px;
+  }
+  #sidebar-search input {
+    background: transparent; border: none; outline: none;
+    color: var(--text); font-family: var(--mono); font-size: 12px;
+    flex: 1; padding: 0;
+  }
+  #sidebar-search .search-glyph { color: var(--text3); font-size: 12px; }
+  #sidebar-search .search-filter {
+    background: transparent; border: none;
+    color: var(--text3); cursor: pointer; font-size: 13px;
+  }
+  #sidebar-search .search-filter:hover { color: var(--accent2); }
+
+  /* Agent card style for chat list items */
+  .chat-item.agent-card {
+    padding: 10px 12px;
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    margin-bottom: 6px;
+    flex-direction: column;
+    align-items: stretch;
+    overflow: visible;
+    white-space: normal;
+  }
+  .chat-item.agent-card.active {
+    border-color: var(--accent);
+    background: linear-gradient(180deg, rgba(217, 119, 6, 0.08), var(--bg3));
+  }
+  .agent-card-row { display: flex; align-items: center; gap: 10px; }
+  .agent-avatar {
+    width: 36px; height: 36px;
+    border-radius: 10px;
+    background: var(--bg4);
+    border: 1px solid var(--border2);
+    display: flex; align-items: center; justify-content: center;
+    color: var(--text); font-weight: 700; font-size: 12px;
+    flex-shrink: 0;
+  }
+  .agent-meta { flex: 1; min-width: 0; }
+  .agent-name {
+    color: var(--text); font-size: 13px; font-weight: 600;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    display: flex; align-items: center; gap: 6px;
+  }
+  .agent-sub {
+    color: var(--text3); font-size: 11px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    margin-top: 1px;
+  }
+  .agent-soul {
+    color: var(--text2); font-size: 10px;
+    margin-top: 4px;
+    display: flex; align-items: center; gap: 4px;
+  }
+  .agent-soul .soul-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--green); }
+
+  /* Status pill */
+  .status-pill {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 2px 8px; border-radius: 999px;
+    font-size: 9px; text-transform: uppercase; letter-spacing: 0.6px;
+    font-weight: 600;
+    background: var(--pill-bg);
+    color: var(--green);
+    border: 1px solid rgba(34, 197, 94, 0.3);
+  }
+  .status-pill .pill-dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--green);
+    box-shadow: 0 0 6px var(--green);
+  }
+  .status-pill.idle {
+    background: rgba(102, 102, 102, 0.12);
+    color: var(--text2);
+    border-color: var(--border2);
+  }
+  .status-pill.idle .pill-dot { background: var(--text3); box-shadow: none; }
+  .status-pill.running {
+    background: rgba(59, 130, 246, 0.12);
+    color: var(--blue);
+    border-color: rgba(59, 130, 246, 0.3);
+  }
+  .status-pill.running .pill-dot { background: var(--blue); box-shadow: 0 0 6px var(--blue); }
+
+  /* Topbar runtime cluster */
+  #runtime-cluster {
+    display: flex; align-items: center; gap: 8px;
+    margin-left: auto;
+  }
+  .runtime-pill {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 4px 10px;
+    border-radius: 999px;
+    background: var(--bg3);
+    border: 1px solid var(--border2);
+    color: var(--text2);
+    font-size: 11px;
+  }
+  .runtime-pill.local { color: var(--green); border-color: rgba(34, 197, 94, 0.3); }
+  .runtime-pill .pill-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+  .runtime-pause-btn {
+    padding: 4px 12px;
+    border-radius: 999px;
+    border: 1px solid var(--border2);
+    background: var(--bg3);
+    color: var(--text2);
+    cursor: pointer; font-family: var(--mono); font-size: 11px;
+  }
+  .runtime-pause-btn:hover { color: var(--accent2); border-color: var(--accent); }
+
+  /* Tabs under topbar */
+  #tabs {
+    display: flex;
+    gap: 4px;
+    padding: 0 24px;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg);
+  }
+  .tab-btn {
+    background: transparent;
+    border: none;
+    color: var(--text3);
+    font-family: var(--mono);
+    font-size: 12px;
+    padding: 12px 16px;
+    cursor: pointer;
+    position: relative;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -1px;
+  }
+  .tab-btn:hover { color: var(--text); }
+  .tab-btn.active {
+    color: var(--text);
+    border-bottom-color: var(--accent);
+  }
+
+  /* Tab panels */
+  .tab-panel { display: none; flex: 1; flex-direction: column; overflow: hidden; }
+  .tab-panel.active { display: flex; }
+  .placeholder-panel {
+    padding: 40px 24px;
+    color: var(--text3);
+    font-size: 12px;
+    line-height: 1.7;
+  }
+  .placeholder-panel h3 {
+    color: var(--text); font-size: 14px; margin-bottom: 8px;
+  }
+  .run-card {
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--green);
+    border-radius: 10px;
+    padding: 14px;
+    margin-bottom: 12px;
+  }
+  .run-card-header {
+    display: flex; align-items: center; gap: 10px;
+    margin-bottom: 8px; font-size: 11px;
+    text-transform: uppercase; letter-spacing: 0.6px;
+    color: var(--text3);
+  }
+  .run-card-header .run-label { font-weight: 700; color: var(--green); }
+  .run-card-header .run-spacer { flex: 1; }
+  .run-card-header .run-open {
+    color: var(--blue); cursor: pointer; font-size: 11px;
+    text-transform: none; letter-spacing: 0;
+  }
+  .run-card-title { color: var(--text); font-size: 13px; font-weight: 600; margin-bottom: 6px; }
+  .run-card-body { color: var(--text2); font-size: 12px; line-height: 1.6; }
+
+  /* Right inspector */
+  #inspector {
+    width: var(--inspector-w);
+    min-width: var(--inspector-w);
+    background: var(--bg2);
+    border-left: 1px solid var(--border);
+    display: flex; flex-direction: column;
+    overflow-y: auto;
+  }
+  #inspector::-webkit-scrollbar { width: 4px; }
+  #inspector::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 2px; }
+  #inspector .inspector-header {
+    padding: 16px;
+    border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  #inspector .inspector-title { font-size: 14px; font-weight: 700; color: var(--text); }
+  .inspector-section {
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--border);
+  }
+  .inspector-section-head {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 10px;
+  }
+  .inspector-section-title {
+    color: var(--text); font-size: 13px; font-weight: 600;
+  }
+  .inspector-edit-btn {
+    background: transparent;
+    border: 1px solid var(--border2);
+    border-radius: 6px;
+    color: var(--text2);
+    font-family: var(--mono);
+    font-size: 10px;
+    padding: 3px 10px;
+    cursor: pointer;
+  }
+  .inspector-edit-btn:hover { color: var(--accent2); border-color: var(--accent); }
+
+  .filter-card {
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px 12px;
+    margin-bottom: 8px;
+    cursor: pointer;
+    transition: border-color 0.15s;
+  }
+  .filter-card:hover { border-color: var(--accent); }
+  .filter-card.selected { border-color: var(--accent); background: var(--bg4); }
+  .filter-label {
+    color: var(--text3); font-size: 9px;
+    text-transform: uppercase; letter-spacing: 0.8px;
+    margin-bottom: 4px;
+  }
+  .filter-value {
+    color: var(--text); font-size: 12px; line-height: 1.5;
+  }
+
+  .skill-card {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 12px;
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    margin-bottom: 8px;
+  }
+  .skill-icon {
+    width: 30px; height: 30px;
+    border-radius: 8px;
+    background: var(--bg4);
+    border: 1px solid var(--border2);
+    display: flex; align-items: center; justify-content: center;
+    color: var(--text); font-weight: 700; font-size: 11px;
+    flex-shrink: 0;
+  }
+  .skill-icon.purple { background: rgba(168, 85, 247, 0.15); border-color: rgba(168, 85, 247, 0.3); color: var(--purple); }
+  .skill-icon.blue { background: rgba(59, 130, 246, 0.15); border-color: rgba(59, 130, 246, 0.3); color: var(--blue); }
+  .skill-icon.green { background: rgba(34, 197, 94, 0.15); border-color: rgba(34, 197, 94, 0.3); color: var(--green); }
+  .skill-meta { flex: 1; min-width: 0; }
+  .skill-name { color: var(--text); font-size: 12px; font-weight: 600; }
+  .skill-desc {
+    color: var(--text3); font-size: 10px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .cron-toggle {
+    padding: 3px 8px;
+    border-radius: 999px;
+    border: 1px solid var(--border2);
+    background: var(--bg);
+    color: var(--text3);
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    cursor: pointer;
+  }
+  .cron-toggle.on {
+    background: var(--pill-bg);
+    color: var(--green);
+    border-color: rgba(34, 197, 94, 0.3);
+  }
+  .view-all-link {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 8px 0;
+    color: var(--text3);
+    font-size: 11px;
+    cursor: pointer;
+  }
+  .view-all-link:hover { color: var(--accent2); }
+
+  /* Schedule item */
+  .schedule-item {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 12px;
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    margin-bottom: 8px;
+  }
+  .schedule-icon {
+    width: 28px; height: 28px;
+    border-radius: 6px;
+    background: var(--bg4);
+    border: 1px solid var(--border2);
+    display: flex; align-items: center; justify-content: center;
+    color: var(--text2); font-size: 13px;
+    flex-shrink: 0;
+  }
+  .schedule-meta { flex: 1; min-width: 0; }
+  .schedule-name { color: var(--text); font-size: 12px; font-weight: 600;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .schedule-when { color: var(--text3); font-size: 10px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  /* Agent header (above tabs) */
+  #agent-header {
+    padding: 14px 24px 8px;
+    display: flex; align-items: center; gap: 12px;
+    background: var(--bg);
+    border-bottom: 1px solid transparent;
+  }
+  #agent-header .ah-avatar {
+    width: 42px; height: 42px;
+    border-radius: 12px;
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: center;
+    color: var(--text); font-weight: 700; font-size: 14px;
+  }
+  #agent-header .ah-meta { flex: 1; min-width: 0; }
+  #agent-header .ah-name {
+    color: var(--text); font-size: 18px; font-weight: 700;
+    display: flex; align-items: center; gap: 10px;
+  }
+  #agent-header .ah-sub { color: var(--text3); font-size: 12px; margin-top: 2px; }
+  #agent-header .ah-actions { display: flex; align-items: center; gap: 6px; }
+  .ah-btn {
+    background: var(--bg3);
+    border: 1px solid var(--border2);
+    border-radius: 8px;
+    color: var(--text2);
+    font-family: var(--mono); font-size: 11px;
+    padding: 5px 12px;
+    cursor: pointer;
+  }
+  .ah-btn:hover { color: var(--accent2); border-color: var(--accent); }
+  .ah-btn.danger:hover { color: var(--red); border-color: var(--red); }
+
+  /* Hide stock topbar pieces we replaced */
+  body.v2-layout #topbar .provider-badge,
+  body.v2-layout #topbar .model-badge { display: none; }
+
+  /* Clarify banner */
+  #clarify-banner {
+    display: none;
+    margin: 12px 24px 0;
+    padding: 12px 14px;
+    background: rgba(224, 177, 93, 0.08);
+    border: 1px solid rgba(224, 177, 93, 0.4);
+    border-left: 3px solid var(--accent2);
+    border-radius: 10px;
+  }
+  #clarify-banner.active { display: block; }
+  #clarify-banner .cb-label {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    color: var(--accent2);
+    font-weight: 700;
+    margin-bottom: 6px;
+  }
+  #clarify-banner .cb-q {
+    color: var(--text); font-size: 13px; line-height: 1.5;
+    margin-bottom: 8px;
+  }
+  #clarify-banner .cb-row { display: flex; gap: 6px; flex-wrap: wrap; }
+  #clarify-banner input {
+    flex: 1; min-width: 200px;
+    background: var(--bg4); border: 1px solid var(--border2);
+    border-radius: 6px; color: var(--text);
+    font-family: var(--mono); font-size: 12px;
+    padding: 6px 10px; outline: none;
+  }
+  #clarify-banner button {
+    background: var(--accent); border: none;
+    color: #000; font-weight: 700;
+    padding: 6px 14px; border-radius: 6px; cursor: pointer;
+  }
+  #clarify-banner .cb-choices { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+  #clarify-banner .cb-choices button {
+    background: var(--bg3); color: var(--text2); font-weight: 500;
+    border: 1px solid var(--border2);
+  }
+  #clarify-banner .cb-choices button:hover { color: var(--accent2); border-color: var(--accent); }
+
+  /* Checkpoint card in inspector */
+  .ckpt-card {
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 10px;
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    margin-bottom: 6px;
+  }
+  .ckpt-meta { flex: 1; min-width: 0; }
+  .ckpt-id { color: var(--text); font-size: 11px; font-weight: 600; font-family: var(--mono);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .ckpt-label { color: var(--text3); font-size: 10px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .ckpt-restore {
+    background: transparent;
+    border: 1px solid var(--border2);
+    color: var(--text2);
+    border-radius: 6px;
+    font-family: var(--mono); font-size: 10px;
+    padding: 3px 8px; cursor: pointer;
+  }
+  .ckpt-restore:hover { color: var(--green); border-color: var(--green); }
+
   /* Streaming cursor */
   .cursor {
     display: inline-block;
@@ -788,21 +1272,40 @@
   #paste-status.success { color: var(--green); }
 </style>
 </head>
-<body>
+<body class="v2-layout">
 <div id="app">
   <div id="context-menu" class="context-menu"></div>
+
+  <!-- Icon Rail (only working sections kept) -->
+  <div id="icon-rail">
+    <div class="rail-logo">C</div>
+    <button class="rail-btn active" data-rail="agents" onclick="setRail('agents')">
+      <span class="rail-glyph">◉</span><span>Agents</span>
+    </button>
+    <button class="rail-btn" data-rail="checkpoints" onclick="setRail('checkpoints')">
+      <span class="rail-glyph">⎌</span><span>Restore</span>
+    </button>
+    <div class="rail-spacer"></div>
+    <button class="rail-btn" data-rail="settings" onclick="setRail('settings')">
+      <span class="rail-glyph">⚙</span><span>Settings</span>
+    </button>
+    <span class="rail-theme-btn" onclick="toggleTheme()" title="Toggle theme">☾</span>
+  </div>
 
   <!-- Sidebar -->
   <div id="sidebar">
     <div id="sidebar-header">
-      <span class="logo">Clod<span> / AI</span></span>
+      <span class="sidebar-title" id="sidebar-title">Agents</span>
+      <button class="sidebar-back" onclick="newChat()" title="New agent">+</button>
     </div>
 
-    <button id="new-chat-btn" onclick="newChat()">
-      <span>+</span> New chat
-    </button>
+    <div id="sidebar-search">
+      <span class="search-glyph">⌕</span>
+      <input id="sidebar-search-input" type="text" placeholder="Search agents..." oninput="filterChatList(this.value)">
+      <button class="search-filter" onclick="cycleChatFilter()" title="Filter">⚙</button>
+    </div>
 
-    <div id="sidebar-section">History</div>
+    <div id="sidebar-section" style="display:none;">History</div>
     <div id="chat-list"></div>
 
     <!-- Settings -->
@@ -835,6 +1338,24 @@
           <option value="plan">Plan</option>
         </select>
       </div>
+      <div>
+        <div class="field-label">Soul</div>
+        <select id="soul-select" onchange="onSoulChange()">
+          <option value="default">Default</option>
+          <option value="karpathy">Karpathy</option>
+          <option value="concise">Concise</option>
+          <option value="proactive">Proactive</option>
+          <option value="debugger">Debugger</option>
+        </select>
+      </div>
+      <div>
+        <div class="field-label">Autonomy</div>
+        <select id="autonomy-select" onchange="onAutonomyChange()">
+          <option value="auto-safe">Auto-safe</option>
+          <option value="confirm">Confirm</option>
+          <option value="full-auto">Full-auto</option>
+        </select>
+      </div>
       <div style="display:flex;gap:6px;">
         <button class="settings-btn" onclick="openKeyModal()" style="flex:1">API Keys</button>
         <button class="settings-btn" onclick="updateModels()" style="flex:1">Update Models</button>
@@ -856,6 +1377,13 @@
       <button class="topbar-btn" onclick="copyAllChat()" title="Copy entire chat history">Copy All</button>
       <button class="topbar-btn" id="topbar-update-models-btn" onclick="updateModels()">Update Models</button>
       <span id="topbar-model-update-result"></span>
+      <div id="runtime-cluster">
+        <span class="runtime-pill">Runtime</span>
+        <span class="runtime-pill local"><span class="pill-dot"></span><span>Local</span></span>
+        <span class="runtime-pill" id="rt-running"><span class="pill-dot" style="background:var(--blue);"></span><span id="rt-running-count">0</span> running</span>
+        <button class="runtime-pause-btn" onclick="stopGeneration()">Pause</button>
+        <span class="runtime-pill" id="rt-provider"><span class="pill-dot" style="background:var(--accent2);"></span><span id="rt-provider-name">OpenAI</span></span>
+      </div>
       <div id="token-monitor" title="Estimated prompt tokens in the active chat, including draft input">
         <div id="token-monitor-row">
           <span>Tokens</span>
@@ -864,6 +1392,41 @@
         <div id="token-bar"><div id="token-bar-fill"></div></div>
       </div>
       <span class="key-status" id="tb-key-status"></span>
+    </div>
+
+    <!-- Agent header (above tabs) -->
+    <div id="agent-header" style="display:none;">
+      <div class="ah-avatar" id="ah-avatar">AG</div>
+      <div class="ah-meta">
+        <div class="ah-name">
+          <span id="ah-name">Agent</span>
+          <span class="status-pill" id="ah-status"><span class="pill-dot"></span>Active</span>
+        </div>
+        <div class="ah-sub" id="ah-sub">agent created from chat.</div>
+      </div>
+      <div class="ah-actions">
+        <button class="ah-btn" onclick="renameCurrentChat()">Edit</button>
+        <button class="ah-btn danger" onclick="deleteCurrentChat()">×</button>
+      </div>
+    </div>
+
+    <!-- Tabs (only Chat is implemented; tab bar hidden when there is only one) -->
+    <div id="tabs" style="display:none;">
+      <button class="tab-btn active" data-tab="chat" onclick="setTab('chat')">Chat</button>
+    </div>
+
+    <!-- Tab panels -->
+    <div id="tab-chat" class="tab-panel active">
+
+    <!-- Clarify banner (mid-run user prompts) -->
+    <div id="clarify-banner">
+      <div class="cb-label">Clarification requested</div>
+      <div class="cb-q" id="clarify-q"></div>
+      <div class="cb-row">
+        <input id="clarify-input" placeholder="Type your answer..." onkeydown="if(event.key==='Enter')sendClarify()">
+        <button onclick="sendClarify()">Send</button>
+      </div>
+      <div class="cb-choices" id="clarify-choices"></div>
     </div>
 
     <!-- Messages -->
@@ -920,6 +1483,52 @@
           <button class="tool-btn" onclick="applyClodImprovements()">Apply Improvements</button>
           <button class="tool-btn primary" onclick="pushToGithub()">Push GitHub</button>
         </div>
+      </div>
+    </div>
+    </div><!-- /tab-chat -->
+
+  </div>
+
+  <!-- Right Inspector -->
+  <div id="inspector">
+    <div class="inspector-header">
+      <span class="inspector-title">Agent Inspector</span>
+      <button class="sidebar-back" onclick="toggleInspector()" title="Collapse">‹</button>
+    </div>
+
+    <div class="inspector-section">
+      <div class="inspector-section-head">
+        <span class="inspector-section-title">Agent filters</span>
+        <button class="inspector-edit-btn" onclick="onSoulChange()">Edit</button>
+      </div>
+      <div class="filter-card" id="insp-soul">
+        <div class="filter-label">Soul</div>
+        <div class="filter-value" id="insp-soul-value">karpathy</div>
+      </div>
+      <div class="filter-card" id="insp-style">
+        <div class="filter-label">Style</div>
+        <div class="filter-value" id="insp-style-value">Concise, calm, and proactive.</div>
+      </div>
+      <div class="filter-card" id="insp-memory">
+        <div class="filter-label">Memory focus</div>
+        <div class="filter-value" id="insp-memory-value">Remember durable preferences, monitoring targets, and execution context.</div>
+      </div>
+      <div class="filter-card" id="insp-autonomy">
+        <div class="filter-label">Autonomy</div>
+        <div class="filter-value" id="insp-autonomy-value">auto-safe</div>
+      </div>
+    </div>
+
+    <div class="inspector-section">
+      <div class="inspector-section-head">
+        <span class="inspector-section-title">Checkpoints</span>
+        <button class="inspector-edit-btn" onclick="createCheckpoint()">Snapshot</button>
+      </div>
+      <div id="insp-checkpoints">
+        <div style="color:var(--text3);font-size:11px;padding:6px 0;">No checkpoints yet.</div>
+      </div>
+      <div class="view-all-link" onclick="refreshCheckpoints()">
+        <span>Refresh</span><span>↻</span>
       </div>
     </div>
   </div>
@@ -1072,6 +1681,16 @@ async function init() {
     }
   }
 
+  // Restore soul + autonomy
+  const savedSoul = localStorage.getItem('clod_soul') || 'karpathy';
+  const soulSel = document.getElementById('soul-select');
+  if (soulSel) soulSel.value = savedSoul;
+  const savedAutonomy = localStorage.getItem('clod_autonomy')
+    || (SOUL_PRESETS[savedSoul] || SOUL_PRESETS.default).autonomy;
+  const autoSel = document.getElementById('autonomy-select');
+  if (autoSel) autoSel.value = savedAutonomy;
+  applySoulToInspector(savedSoul);
+
   renderChatList();
   if (chats.length) loadChat(chats[0].id);
 
@@ -1080,6 +1699,11 @@ async function init() {
   updateTopbar();
   updateTokenMonitor();
   setInterval(updateTokenMonitor, 1000);
+
+  // Poll clarify queue every 3s; load checkpoints once.
+  if (clarifyTimer) clearInterval(clarifyTimer);
+  clarifyTimer = setInterval(pollClarify, 3000);
+  refreshCheckpoints();
 }
 
 async function refreshModels() {
@@ -1475,6 +2099,10 @@ function updateTopbar() {
   const modeLabel = mode === 'build_debug' ? 'Build / Debug' : mode;
   document.getElementById('tb-provider').textContent = PROVIDER_NAMES[p] || p;
   document.getElementById('tb-model').textContent = mode === 'chat' ? m : `${m} / ${modeLabel}`;
+  const rtName = document.getElementById('rt-provider-name');
+  if (rtName) rtName.textContent = PROVIDER_NAMES[p] || p;
+  const rtCount = document.getElementById('rt-running-count');
+  if (rtCount) rtCount.textContent = isStreaming ? '1' : '0';
 
   const ks = keyStatuses[p];
   const keyEl = document.getElementById('tb-key-status');
@@ -1777,16 +2405,286 @@ function saveChats() {
   try { localStorage.setItem('clod_chats', JSON.stringify(trimmed)); } catch(e) {}
 }
 
+let chatListFilter = '';
+let chatStatusFilter = 'all'; // all | active | idle
+
+function _initials(s) {
+  const parts = (s || 'AG').trim().split(/\s+/);
+  const a = (parts[0] || 'A')[0] || 'A';
+  const b = (parts[1] || parts[0] || 'G')[parts[1] ? 0 : 1] || 'G';
+  return (a + b).toUpperCase();
+}
+
+function _chatSoul(c) {
+  return c.soul || (localStorage.getItem('clod_soul') || 'karpathy');
+}
+
+function _chatStatus(c) {
+  if (isStreaming && c.id === currentChatId) return 'running';
+  if (c.id === currentChatId) return 'active';
+  return 'idle';
+}
+
 function renderChatList() {
   const list = document.getElementById('chat-list');
-  list.innerHTML = chats.map(c => `
-    <div class="chat-item ${c.id === currentChatId ? 'active' : ''}" 
-         onclick="loadChat('${c.id}')" 
+  const q = (chatListFilter || '').toLowerCase();
+  const visible = chats.filter(c => {
+    if (q && !(c.title || '').toLowerCase().includes(q)) return false;
+    if (chatStatusFilter === 'active' && _chatStatus(c) === 'idle') return false;
+    if (chatStatusFilter === 'idle' && _chatStatus(c) !== 'idle') return false;
+    return true;
+  });
+  list.innerHTML = visible.map(c => {
+    const status = _chatStatus(c);
+    const soul = _chatSoul(c);
+    const sub = c.sub || 'agent';
+    return `
+    <div class="chat-item agent-card ${c.id === currentChatId ? 'active' : ''}"
+         onclick="loadChat('${c.id}')"
          oncontextmenu="showChatContextMenu(event, '${c.id}')">
-      <span style="overflow:hidden;text-overflow:ellipsis">${escHtml(c.title)}</span>
-      <button class="delete-chat" onclick="deleteChat('${c.id}', event)" title="Delete">&times;</button>
+      <div class="agent-card-row">
+        <div class="agent-avatar">${escHtml(_initials(c.title))}</div>
+        <div class="agent-meta">
+          <div class="agent-name">
+            <span style="overflow:hidden;text-overflow:ellipsis;flex:1;min-width:0;">${escHtml(c.title)}</span>
+            <span class="status-pill ${status === 'idle' ? 'idle' : (status === 'running' ? 'running' : '')}">
+              <span class="pill-dot"></span>${status === 'idle' ? 'Idle' : (status === 'running' ? 'Running' : 'Active')}
+            </span>
+          </div>
+          <div class="agent-sub">${escHtml(sub)}</div>
+          <div class="agent-soul"><span class="soul-dot"></span>Soul: ${escHtml(soul)}</div>
+        </div>
+        <button class="delete-chat" onclick="deleteChat('${c.id}', event)" title="Delete">&times;</button>
+      </div>
+    </div>`;
+  }).join('') || (chats.length
+    ? `<div style="padding:14px;color:var(--text3);font-size:11px;">No agents match.</div>`
+    : `<div style="padding:14px;color:var(--text3);font-size:11px;">No agents yet. Click + to create one.</div>`);
+  // Update agent header for the current chat
+  const cur = chats.find(c => c.id === currentChatId);
+  const header = document.getElementById('agent-header');
+  if (cur && header) {
+    header.style.display = 'flex';
+    document.getElementById('ah-avatar').textContent = _initials(cur.title);
+    document.getElementById('ah-name').textContent = cur.title;
+    document.getElementById('ah-sub').textContent = (cur.sub || 'agent created from chat.');
+    const status = _chatStatus(cur);
+    const pill = document.getElementById('ah-status');
+    pill.className = 'status-pill ' + (status === 'idle' ? 'idle' : (status === 'running' ? 'running' : ''));
+    pill.innerHTML = `<span class="pill-dot"></span>${status === 'idle' ? 'Idle' : (status === 'running' ? 'Running' : 'Active')}`;
+  } else if (header) {
+    header.style.display = 'none';
+  }
+}
+
+function filterChatList(q) {
+  chatListFilter = q || '';
+  renderChatList();
+}
+
+function cycleChatFilter() {
+  chatStatusFilter = chatStatusFilter === 'all' ? 'active'
+                  : chatStatusFilter === 'active' ? 'idle' : 'all';
+  renderChatList();
+}
+
+function setRail(name) {
+  document.querySelectorAll('.rail-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.rail === name);
+  });
+  const titles = { agents: 'Agents', checkpoints: 'Restore', settings: 'Settings' };
+  const el = document.getElementById('sidebar-title');
+  if (el) el.textContent = titles[name] || name;
+  if (name === 'settings') {
+    const sp = document.getElementById('settings-panel');
+    if (sp) sp.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  } else if (name === 'checkpoints') {
+    refreshCheckpoints();
+    const insp = document.getElementById('inspector');
+    if (insp) insp.scrollTo({ top: insp.scrollHeight, behavior: 'smooth' });
+  }
+}
+
+function toggleTheme() {
+  document.body.classList.toggle('light-theme');
+}
+
+function toggleInspector() {
+  const insp = document.getElementById('inspector');
+  if (!insp) return;
+  insp.style.display = insp.style.display === 'none' ? 'flex' : 'none';
+}
+
+function renameCurrentChat() {
+  const c = chats.find(x => x.id === currentChatId);
+  if (!c) return;
+  const next = prompt('Rename agent:', c.title);
+  if (next && next.trim()) {
+    c.title = next.trim();
+    localStorage.setItem('clod_chats', JSON.stringify(chats));
+    renderChatList();
+  }
+}
+
+function deleteCurrentChat() {
+  if (!currentChatId) return;
+  deleteChat(currentChatId, { stopPropagation: () => {} });
+}
+
+const SOUL_PRESETS = {
+  default:   { style: 'Direct, factual, no fluff.', memory: 'Current task and recently touched files.', autonomy: 'auto-safe' },
+  karpathy:  { style: 'Concise, calm, and proactive.', memory: 'Remember durable preferences, monitoring targets, and execution context.', autonomy: 'auto-safe' },
+  concise:   { style: 'Terse. Fragments OK. Short synonyms.', memory: 'Only the immediate task.', autonomy: 'auto-safe' },
+  proactive: { style: 'Anticipates next steps. Suggests follow-ups.', memory: 'Project goals and pending follow-ups.', autonomy: 'full-auto' },
+  debugger:  { style: 'Hypothesis-first. Verify before claiming fix.', memory: 'Symptoms, hypotheses, verification commands.', autonomy: 'confirm' },
+};
+
+function applySoulToInspector(name) {
+  const p = SOUL_PRESETS[name] || SOUL_PRESETS.default;
+  const v = (id, t) => { const e = document.getElementById(id); if (e) e.textContent = t; };
+  v('insp-soul-value', name);
+  v('insp-style-value', p.style);
+  v('insp-memory-value', p.memory);
+  v('insp-autonomy-value', (document.getElementById('autonomy-select') || {}).value || p.autonomy);
+}
+
+function onSoulChange() {
+  const sel = document.getElementById('soul-select');
+  const name = (sel && sel.value) || 'default';
+  localStorage.setItem('clod_soul', name);
+  applySoulToInspector(name);
+  // Also update inherent autonomy to soul default unless user set otherwise.
+  const stored = localStorage.getItem('clod_autonomy');
+  if (!stored) {
+    const a = document.getElementById('autonomy-select');
+    const def = (SOUL_PRESETS[name] || {}).autonomy || 'auto-safe';
+    if (a) a.value = def;
+    applySoulToInspector(name);
+  }
+  // Tag the current chat with this soul so per-agent display works.
+  const cur = chats.find(c => c.id === currentChatId);
+  if (cur) {
+    cur.soul = name;
+    localStorage.setItem('clod_chats', JSON.stringify(chats));
+    renderChatList();
+  }
+}
+
+function onAutonomyChange() {
+  const a = document.getElementById('autonomy-select');
+  const v = (a && a.value) || 'auto-safe';
+  localStorage.setItem('clod_autonomy', v);
+  const e = document.getElementById('insp-autonomy-value');
+  if (e) e.textContent = v;
+}
+
+// ── Clarify (mid-run user prompts) ──────────────────────────────────────
+let clarifyTimer = null;
+
+function _currentSessionId() {
+  return currentChatId || '';
+}
+
+async function pollClarify() {
+  const sid = _currentSessionId();
+  if (!sid) return;
+  try {
+    const r = await fetch('/clarify/' + encodeURIComponent(sid));
+    if (!r.ok) return;
+    const data = await r.json();
+    renderClarify(data.pending);
+  } catch (e) {}
+}
+
+function renderClarify(pending) {
+  const banner = document.getElementById('clarify-banner');
+  if (!banner) return;
+  if (!pending) {
+    banner.classList.remove('active');
+    return;
+  }
+  banner.classList.add('active');
+  document.getElementById('clarify-q').textContent = pending.question || '';
+  const cw = document.getElementById('clarify-choices');
+  cw.innerHTML = (pending.choices || []).map(c =>
+    `<button onclick="sendClarify(${JSON.stringify(c).replace(/"/g, '&quot;')})">${escHtml(c)}</button>`
+  ).join('');
+}
+
+async function sendClarify(forced) {
+  const sid = _currentSessionId();
+  const inp = document.getElementById('clarify-input');
+  const txt = forced || (inp && inp.value.trim());
+  if (!sid || !txt) return;
+  try {
+    await fetch('/clarify/respond', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ session_id: sid, response: txt }),
+    });
+    if (inp) inp.value = '';
+    document.getElementById('clarify-banner').classList.remove('active');
+  } catch (e) {}
+}
+
+// ── Checkpoints ─────────────────────────────────────────────────────────
+
+async function refreshCheckpoints() {
+  const ws = (document.getElementById('workspace-input') || {}).value || '';
+  try {
+    const r = await fetch('/checkpoints' + (ws ? '?workspace=' + encodeURIComponent(ws) : ''));
+    if (!r.ok) return;
+    const data = await r.json();
+    renderCheckpoints(data.checkpoints || []);
+  } catch (e) {}
+}
+
+function renderCheckpoints(list) {
+  const wrap = document.getElementById('insp-checkpoints');
+  if (!wrap) return;
+  if (!list.length) {
+    wrap.innerHTML = `<div style="color:var(--text3);font-size:11px;padding:6px 0;">No checkpoints yet.</div>`;
+    return;
+  }
+  wrap.innerHTML = list.slice(0, 10).map(c => `
+    <div class="ckpt-card">
+      <div class="ckpt-meta">
+        <div class="ckpt-id">${escHtml(c.id)}</div>
+        <div class="ckpt-label">${escHtml(c.label || '')} · ${c.files} files</div>
+      </div>
+      <button class="ckpt-restore" onclick="restoreCheckpoint('${c.id}')">Restore</button>
     </div>
   `).join('');
+}
+
+async function createCheckpoint() {
+  const ws = (document.getElementById('workspace-input') || {}).value || '';
+  const label = prompt('Checkpoint label (optional):', '') || '';
+  try {
+    const r = await fetch('/checkpoints', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ workspace: ws || null, label }),
+    });
+    const data = await r.json();
+    if (data.ok) refreshCheckpoints();
+    else alert('Checkpoint failed: ' + (data.error || 'unknown'));
+  } catch (e) { alert('Checkpoint error: ' + e); }
+}
+
+async function restoreCheckpoint(id) {
+  if (!confirm('Restore workspace from checkpoint ' + id + '? This overwrites files.')) return;
+  const ws = (document.getElementById('workspace-input') || {}).value || '';
+  try {
+    const r = await fetch('/checkpoints/restore', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ workspace: ws || null, checkpoint_id: id }),
+    });
+    const data = await r.json();
+    if (data.ok) alert('Restored ' + data.restored + ' files.');
+    else alert('Restore failed: ' + (data.error || 'unknown'));
+  } catch (e) { alert('Restore error: ' + e); }
 }
 
 function showChatContextMenu(e, id) {
@@ -1964,7 +2862,7 @@ async function streamAssistant(chat) {
       if (isStreaming && abortController) {
         abortController.abort();
       }
-    }, streamStarted ? 60000 : 30000);
+    }, streamStarted ? 90000 : 90000);
   };
 
   try {
@@ -1975,6 +2873,8 @@ async function streamAssistant(chat) {
       model,
       mode: document.getElementById('mode-select').value,
       workspace: document.getElementById('workspace-input').value.trim() || null,
+      soul: (document.getElementById('soul-select') || {}).value || localStorage.getItem('clod_soul') || 'karpathy',
+      autonomy: (document.getElementById('autonomy-select') || {}).value || localStorage.getItem('clod_autonomy') || null,
     };
 
     const resp = await fetch('/chat', {
